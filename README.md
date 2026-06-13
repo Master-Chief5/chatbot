@@ -1,8 +1,18 @@
-# 💬 Chatbot template
+# 🟡 The Backrooms — a text-adventure horror game
 
-A simple Streamlit app that shows how to build a chatbot using OpenAI's GPT-3.5.
+You've no-clipped out of reality into the Backrooms: an endless maze of damp,
+mono-yellow rooms lit by buzzing fluorescent lights. An AI game master narrates
+your descent and reacts to whatever you type. Stay quiet, manage your **sanity**
+and **health**, find **Almond Water**, and look for a way out.
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://chatbot-template.streamlit.app/)
+Built on [Streamlit](https://streamlit.io) with OpenAI as the game master.
+
+### Features
+
+- Free-text actions — type anything ("listen", "hide under the desk", "run").
+- Live **Level / Sanity / Health / Items** status panel.
+- Atmospheric liminal-yellow styling.
+- Permadeath with a "New descent" button to start over.
 
 ### How to run it on your own machine
 
@@ -17,3 +27,6 @@ A simple Streamlit app that shows how to build a chatbot using OpenAI's GPT-3.5.
    ```
    $ streamlit run streamlit_app.py
    ```
+
+3. Paste your [OpenAI API key](https://platform.openai.com/account/api-keys) and
+   begin your descent.
