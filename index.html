@@ -420,6 +420,16 @@ const offLevels=[
   {name:'Pitch — The Dark',desc:'the fluorescents died years ago.',wall:'#4a4a3c',fog:'#070705',carpet:'#2e2e26',danger:3,fogD:0.13},
 ];
 function fillName(s){ return (s||'').replace(/\[n\]/gi,playerName); }
+// Verify the key actually works (failures otherwise fall back silently). Tells
+// you the truth in the corner tag, and disables a dead key so it stops retrying.
+async function aiSelfTest(){ const tag=document.getElementById('aiTag');
+  if(!AI_KEY){ tag.textContent='AI: OFFLINE (no key)'; return; }
+  tag.textContent='AI: checking…';
+  try{ const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+AI_KEY},
+      body:JSON.stringify({model:'gpt-4o-mini',max_tokens:1,messages:[{role:'user',content:'ping'}]})});
+    if(r.ok){ tag.textContent='AI: ONLINE ✓'; }
+    else { let why=r.status===401?'bad key':r.status===429?'no credit/rate':('error '+r.status); tag.textContent='AI: FAILED — '+why+' (offline)'; AI_KEY=null; console.warn('AI key test failed', r.status, await r.text().catch(()=>'')); }
+  }catch(e){ tag.textContent='AI: BLOCKED — network/CORS (offline)'; AI_KEY=null; console.warn('AI fetch error', e); } }
 async function aiJSON(sys,user,fb){ if(!AI_KEY) return fb();
   try{ const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+AI_KEY},
       body:JSON.stringify({model:'gpt-4o-mini',temperature:1,max_tokens:220,response_format:{type:'json_object'},messages:[{role:'system',content:sys},{role:'user',content:user}]})});
@@ -838,7 +848,7 @@ volRange.value=save.vol; volVal.textContent=Math.round(save.vol*100); fovRange.v
 volRange.addEventListener('input',()=>{ save.vol=+volRange.value; volVal.textContent=Math.round(save.vol*100); if(master) master.gain.value=save.vol; persist(); });
 fovRange.addEventListener('input',()=>{ save.fov=+fovRange.value; fovVal.textContent=save.fov; camera.fov=save.fov; camera.updateProjectionMatrix(); persist(); });
 qualSel.addEventListener('change',()=>{ save.quality=qualSel.value; applyQuality(); persist(); });
-document.getElementById('playBtn').onclick=()=>{ const nm=document.getElementById('playerName').value.trim(); playerName=nm||'you'; const k=document.getElementById('aiKey').value.trim(); AI_KEY=k||null; hide(startScreen); startAudio(); applySettings(); startRun(); updateHUD(); if(!isTouch) canvas.requestPointerLock(); };
+document.getElementById('playBtn').onclick=()=>{ const nm=document.getElementById('playerName').value.trim(); playerName=nm||'you'; const k=document.getElementById('aiKey').value.trim(); AI_KEY=k||null; hide(startScreen); startAudio(); applySettings(); startRun(); aiSelfTest(); updateHUD(); if(!isTouch) canvas.requestPointerLock(); };
 function renderObjLog(){ const el=document.getElementById('objLog'); const ph=save.story.phase, done=save.story.objectivesDone||0;
   const phases=['','survive & explore','strange signals','locate the anomalies','the escape protocol','the way out'];
   el.innerHTML=`◈ PHASE ${ph}/5 — ${phases[ph]||''}<br>signals recovered: ${done}${save.story.won?'  ·  you escaped once':''}${save.psych&&save.psych.motif?'<br><span style="opacity:.6">recurring: "'+save.psych.motif+'"</span>':''}`; }
