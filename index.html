@@ -272,7 +272,7 @@ function setEntityCount(n){ n=Math.max(1,Math.min(5,n)); let perm=entities.filte
 
 // is a world point within the player's view cone (i.e. being looked at)?
 const fwdVec=new THREE.Vector3();
-function lookingAt(x,z,coneDot=0.55){ const fx=-Math.sin(player.yaw),fz=Math.cos(player.yaw); let dx=x-player.x,dz=z-player.z; const d=Math.hypot(dx,dz)||1; return (fx*dx+fz*dz)/d>coneDot; }
+function lookingAt(x,z,coneDot=0.55){ const fx=-Math.sin(player.yaw),fz=-Math.cos(player.yaw); let dx=x-player.x,dz=z-player.z; const d=Math.hypot(dx,dz)||1; return (fx*dx+fz*dz)/d>coneDot; }
 
 // ===================== AUDIO (psychological) =====================
 let actx=null,master=null,droneG=null,started=false;
@@ -442,7 +442,7 @@ function update(dt){
 
   let speed=st.walkSpeed; const run=running&&mag>0.1&&stamina>1;
   if(run){ speed*=st.sprintMul; stamina=Math.max(0,stamina-st.sprintDrain*dt); } else stamina=Math.min(st.maxStamina,stamina+16*dt);
-  const sin=Math.sin(player.yaw),cos=Math.cos(player.yaw),dx=(str*cos-fwd*sin)*speed*dt,dz=(str*sin+fwd*cos)*speed*dt,R=0.32;
+  const sin=Math.sin(player.yaw),cos=Math.cos(player.yaw),dx=(str*cos-fwd*sin)*speed*dt,dz=-(str*sin+fwd*cos)*speed*dt,R=0.32;
   if(!blocked(player.x+dx,player.z,R)) player.x+=dx; if(!blocked(player.x,player.z+dz,R)) player.z+=dz;
   const moving=mag>0.1,bob=moving?Math.sin(performance.now()*0.012*(run?1.6:1))*0.045:0;
   camera.position.set(player.x,EYE+bob,player.z); camera.rotation.set(player.pitch,player.yaw,0);
@@ -476,7 +476,7 @@ function update(dt){
   vignette.style.boxShadow=`inset 0 0 ${120+dread*200}px ${20+dread*120}px rgba(0,0,0,${0.25+dread*0.6})`;
   redPulse.style.opacity=(dread*0.6*(0.6+0.4*Math.sin(performance.now()*0.008))).toFixed(3);
   // directional cue when it's behind you and close (Sixth Sense upgrade)
-  if(st.radar>0 && nearestUnseen && nearest<13){ const side=nearestSide; dreadEdge.style.background=`linear-gradient(${side>0?'90deg':'270deg'}, rgba(120,0,0,${0.04+st.radar*0.04}), rgba(120,0,0,0) 22%)`; dreadEdge.style.opacity=1; } else dreadEdge.style.opacity=0;
+  if(st.radar>0 && nearestUnseen && nearest<13){ const side=nearestSide; dreadEdge.style.background=`linear-gradient(${side>0?'270deg':'90deg'}, rgba(120,0,0,${0.04+st.radar*0.04}), rgba(120,0,0,0) 22%)`; dreadEdge.style.opacity=1; } else dreadEdge.style.opacity=0;
   hbT-=dt; if(nearest<15){ if(hbT<=0){ const v=0.25+dread*0.7; thump(v); setTimeout(()=>thump(v*0.7),140); hbT=0.5+(1-dread)*1.1; } }
 
   // subliminal flash when it's in view, motionless, far (lurk dread)
@@ -513,7 +513,7 @@ function updateEntities(dt){
     if(move>0){ const nx=ex+gx/gd*move,nz=ez+gz/gd*move; if(!blocked(nx,ez,0.4)) e.g.position.x=nx; if(!blocked(e.g.position.x,nz,0.4)) e.g.position.z=nz; }
     e.g.lookAt(player.x,1.4,player.z); e.eyes.color.setRGB(1,1,1);
     const nd=Math.hypot(e.g.position.x-player.x,e.g.position.z-player.z);
-    if(nd<nearest){ nearest=nd; nearestSeen=seen; nearestUnseen=!seen; const rx=e.g.position.x-player.x,rz=e.g.position.z-player.z; nearestSide=(-Math.cos(player.yaw)*rx-Math.sin(player.yaw)*rz)>0?1:-1; }
+    if(nd<nearest){ nearest=nd; nearestSeen=seen; nearestUnseen=!seen; const rx=e.g.position.x-player.x,rz=e.g.position.z-player.z; nearestSide=(rx*Math.cos(player.yaw)-rz*Math.sin(player.yaw))>0?1:-1; }
     if(nd<1.25 && mood!=='calm'){ caught(); return nearest; }
   }
   return nearest;
@@ -532,7 +532,7 @@ function caught(){
 const stamFill=document.getElementById('stamFill'),coinNum=document.getElementById('coinNum'),coords=document.getElementById('coords'),vignette=document.getElementById('vignette'),redPulse=document.getElementById('redPulse'),dreadEdge=document.getElementById('dreadEdge'),objEl=document.getElementById('objective');
 function updateHUD(){ stamFill.style.width=(stamina/st.maxStamina*100)+'%'; coinNum.textContent=save.bank; coords.textContent=(level?level.name:'LEVEL 0')+(wardCharges>0?'  ·  ward '+wardCharges:''); }
 function renderObjHUD(){ if(!objective){ objEl.style.opacity=0; return; } let extra='',arrow='';
-  if(objective.kind==='reach'){ const ang=Math.atan2(objective.tz-player.z,objective.tx-player.x)-player.yaw-Math.PI/2; arrow=`<span class="oarrow" style="transform:rotate(${(-ang*180/Math.PI)}deg)">▲</span>`; extra=' · '+Math.round(objective.dist||0)+'m'; }
+  if(objective.kind==='reach'){ const rx=objective.tx-player.x,rz=objective.tz-player.z,fX=-Math.sin(player.yaw),fZ=-Math.cos(player.yaw),rX=Math.cos(player.yaw),rZ=-Math.sin(player.yaw); const deg=Math.atan2(rx*rX+rz*rZ,rx*fX+rz*fZ)*180/Math.PI; arrow=`<span class="oarrow" style="transform:rotate(${deg}deg)">▲</span>`; extra=' · '+Math.round(objective.dist||0)+'m'; }
   else if(objective.kind==='survive'){ extra=' · '+Math.max(0,Math.ceil(objective.timeLeft||0))+'s'; }
   else { extra=' · '+(objective.progress||0)+'/'+objective.amount; }
   objEl.innerHTML=`◈ ${objective.text}${extra} (+${objective.reward}🥛)${arrow}`; objEl.style.opacity=1; }
