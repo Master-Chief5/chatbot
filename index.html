@@ -139,8 +139,9 @@ const UPGRADES={
   radar:{name:'Sixth Sense',desc:'Feel which way it is when it is behind you.',max:3,base:14,mult:1.8},
   ward:{name:'Almond Ward',desc:'Survive being caught (charges per run).',max:3,base:26,mult:2.1},
 };
-function defaultSave(){ const u={}; for(const k in UPGRADES) u[k]=0; return {bank:0,totalCollected:0,upgrades:u,sens:1.0}; }
-function loadSave(){ try{ const s=JSON.parse(localStorage.getItem(SAVE_KEY)); if(s&&s.upgrades){ const d=defaultSave(); return {...d,...s,upgrades:{...d.upgrades,...s.upgrades}}; } }catch(e){} return defaultSave(); }
+function defaultSave(){ const u={}; for(const k in UPGRADES) u[k]=0; return {bank:0,totalCollected:0,upgrades:u,sens:1.0,
+  psych:{runs:0,sprint:0,fled:0,lookback:0,favTurn:'left'}, story:{phase:1,objectivesDone:0,won:false}}; }
+function loadSave(){ try{ const s=JSON.parse(localStorage.getItem(SAVE_KEY)); if(s&&s.upgrades){ const d=defaultSave(); return {...d,...s,upgrades:{...d.upgrades,...s.upgrades},psych:{...d.psych,...s.psych},story:{...d.story,...s.story}}; } }catch(e){} return defaultSave(); }
 function persist(){ try{ localStorage.setItem(SAVE_KEY,JSON.stringify(save)); }catch(e){} }
 const save=loadSave();
 function upgCost(k){ return Math.round(UPGRADES[k].base*Math.pow(UPGRADES[k].mult,save.upgrades[k])); }
@@ -169,7 +170,8 @@ function chunkData(cx,cz){
   d={walls,pillars,props,pickups}; genCache.set(key,d); return d;
 }
 function cellSolid(gi,gj){ const cx=Math.floor(gi/CHUNK),cz=Math.floor(gj/CHUNK),lx=gi-cx*CHUNK,lz=gj-cz*CHUNK; if(lx===0||lz===0) return false; return chunkData(cx,cz).walls.has(lx+','+lz); }
-function cellPillar(gi,gj){ const cx=Math.floor(gi/CHUNK),cz=Math.floor(gj/CHUNK),lx=gi-cx*CHUNK,lz=gj-cz*CHUNK; if(lx===0||lz===0) return false; return chunkData(cx,cz).pillars.has(lx+','+lz); }
+// addPillars / delPillars are the Environment Intelligence's map overrides (declared in the psych section)
+function cellPillar(gi,gj){ const k=gi+','+gj; if(typeof delPillars!=='undefined'&&delPillars.has(k)) return false; if(typeof addPillars!=='undefined'&&addPillars.has(k)) return true; const cx=Math.floor(gi/CHUNK),cz=Math.floor(gj/CHUNK),lx=gi-cx*CHUNK,lz=gj-cz*CHUNK; if(lx===0||lz===0) return false; return chunkData(cx,cz).pillars.has(lx+','+lz); }
 const PILLAR_HALF=0.55;
 function blocked(x,z,r){
   const minI=Math.floor((x-r)/CELL),maxI=Math.floor((x+r)/CELL),minJ=Math.floor((z-r)/CELL),maxJ=Math.floor((z+r)/CELL);
@@ -230,7 +232,10 @@ function buildChunk(cx,cz){
   const f=new THREE.Mesh(planeGeo,floorMat); f.rotation.x=-Math.PI/2; f.position.set(ox+CHUNK*CELL/2,0,oz+CHUNK*CELL/2); g.add(f);
   const c=new THREE.Mesh(planeGeo,ceilMat); c.rotation.x=Math.PI/2; c.position.set(ox+CHUNK*CELL/2,WALL_H,oz+CHUNK*CELL/2); g.add(c);
   if(d.walls.size){ const im=new THREE.InstancedMesh(wallGeo,wallMat,d.walls.size),m=new THREE.Matrix4(); let n=0; d.walls.forEach(k=>{ const [lx,lz]=k.split(',').map(Number); m.makeTranslation(ox+(lx+0.5)*CELL,WALL_H/2,oz+(lz+0.5)*CELL); im.setMatrixAt(n++,m); }); im.instanceMatrix.needsUpdate=true; g.add(im); }
-  if(d.pillars.size){ const im=new THREE.InstancedMesh(pillGeo,wallMat,d.pillars.size),m=new THREE.Matrix4(); let n=0; d.pillars.forEach(k=>{ const [lx,lz]=k.split(',').map(Number); m.makeTranslation(ox+(lx+0.5)*CELL,WALL_H/2,oz+(lz+0.5)*CELL); im.setMatrixAt(n++,m); }); im.instanceMatrix.needsUpdate=true; g.add(im); }
+  // pillars, including Environment Intelligence overrides (added / removed columns)
+  const pset=new Set(); d.pillars.forEach(k=>{ const [lx,lz]=k.split(',').map(Number); if(!delPillars.has((cx*CHUNK+lx)+','+(cz*CHUNK+lz))) pset.add(lx+','+lz); });
+  addPillars.forEach(gk=>{ const [gi,gj]=gk.split(',').map(Number); if(Math.floor(gi/CHUNK)===cx&&Math.floor(gj/CHUNK)===cz) pset.add((gi-cx*CHUNK)+','+(gj-cz*CHUNK)); });
+  if(pset.size){ const im=new THREE.InstancedMesh(pillGeo,wallMat,pset.size),m=new THREE.Matrix4(); let n=0; pset.forEach(k=>{ const [lx,lz]=k.split(',').map(Number); m.makeTranslation(ox+(lx+0.5)*CELL,WALL_H/2,oz+(lz+0.5)*CELL); im.setMatrixAt(n++,m); }); im.instanceMatrix.needsUpdate=true; g.add(im); }
   for(const p of d.props){ const wx=ox+(p.lx+0.5)*CELL,wz=oz+(p.lz+0.5)*CELL;
     if(p.type==='box'){ const b=new THREE.Mesh(boxGeo,boxMat); b.scale.setScalar(0.6*p.scale); b.position.set(wx,0.3*p.scale,wz); b.rotation.y=p.rot; g.add(b); }
     else if(p.type==='wet'){ const w=new THREE.Mesh(wetGeo,wetMat); w.rotation.x=-Math.PI/2; w.scale.setScalar(p.scale); w.position.set(wx,0.02,wz); g.add(w); }
@@ -358,7 +363,9 @@ async function enterZone(zx,zz){ depth=Math.abs(zx)+Math.abs(zz);
     `Design the level just entered at depth ${depth} (deeper = stranger, more dangerous). Make it nightmarish and distinct.`, fb);
   level={ name:L.name||('Level '+depth), desc:L.desc||'the hum continues.', danger:Math.max(0,Math.min(4,L.danger??1)), wall:safeColor(L.wall,'#ffffff'), fog:safeColor(L.fog,'#3a3414'), carpet:safeColor(L.carpet,'#ffffff'), fogD:L.fogD||(0.07+(L.danger??1)*0.012) };
   tWall.copy(level.wall); tFloor.copy(level.carpet); tCeil.copy(level.wall).lerp(new THREE.Color(0xfff2c0),0.5); tFog.copy(level.fog); tFogD=level.fogD;
-  setEntityCount(1+level.danger); showLevelBanner(level.name,level.desc); if(!objective) requestObjective(); }
+  setEntityCount(1+level.danger); showLevelBanner(level.name,level.desc);
+  if(typeof maybeSpawnExit==='function') maybeSpawnExit();        // Feature 7: rare false-exit once you've progressed
+  if(!objective) requestObjective(); }
 function ensureZone(px,pz){ const zx=Math.floor(px/(ZONE*CHUNK*CELL)),zz=Math.floor(pz/(ZONE*CHUNK*CELL)),key=zx+','+zz; if(key!==curZone){ curZone=key; enterZone(zx,zz); } }
 
 // objectives
@@ -374,9 +381,13 @@ function setObjective(o){ const kind=['reach','survive','collect'].includes(o.ki
   objective={ text:o.text||'press on', kind, amount:+o.amount||0, reward:Math.max(2,Math.min(12,+o.reward||4)), progress:0 };
   if(kind==='reach'){ const t=randomOpenNear(player.x,player.z,34,60); objective.tx=t.x; objective.tz=t.z; beacon.position.set(t.x,0,t.z); beacon.visible=true; }
   else { beacon.visible=false; if(kind==='survive') objective.timeLeft=objective.amount||45; if(kind==='collect') objective.base=save.bank; } }
-function completeObjective(){ if(!objective) return; const rw=objective.reward; save.bank+=rw; persist(); showToast('OBJECTIVE COMPLETE  +'+rw+' 🥛'); beacon.visible=false; objective=null; nextObjT=4; }
+function completeObjective(){ if(!objective) return; const rw=objective.reward; save.bank+=rw;
+  // Feature 6: layered long-term progression across runs (phase 1..5)
+  save.story.objectivesDone=(save.story.objectivesDone||0)+1; const ph=Math.min(5,1+Math.floor(save.story.objectivesDone/4));
+  if(ph>save.story.phase){ save.story.phase=ph; showToast('SIGNAL ACQUIRED — phase '+ph); } else showToast('OBJECTIVE COMPLETE  +'+rw+' 🥛');
+  persist(); beacon.visible=false; objective=null; nextObjT=4; }
 function updateObjective(dt){ if(!objective){ if(nextObjT>0){ nextObjT-=dt; if(nextObjT<=0) requestObjective(); } renderObjHUD(); return; }
-  if(objective.kind==='reach'){ objective.dist=Math.hypot(objective.tx-player.x,objective.tz-player.z); beacon.rotation.y+=dt*0.6; beaconLight.intensity=1.0+0.4*Math.sin(performance.now()*0.005); if(objective.dist<2.4) completeObjective(); }
+  if(objective.kind==='reach'){ objective.dist=Math.hypot(objective.tx-player.x,objective.tz-player.z); if(!objective.exit){ beacon.rotation.y+=dt*0.6; beaconLight.intensity=1.0+0.4*Math.sin(performance.now()*0.005); } if(objective.dist<2.4){ if(objective.exit) resolveExit(); else completeObjective(); } }
   else if(objective.kind==='survive'){ objective.timeLeft-=dt; if(objective.timeLeft<=0) completeObjective(); }
   else { objective.progress=save.bank-(objective.base||0); if(objective.progress>=objective.amount) completeObjective(); }
   renderObjHUD(); }
@@ -391,7 +402,7 @@ async function runDirector(){
   const fb=()=>{ const r=Math.random(); return {mood: r<0.58?'':(r<0.82?'hunt':'calm'), event: r<0.16?'blackout':(r<0.34?'drop':'none'), whisper:null}; };
   const o=await aiJSON('You are the unseen DIRECTOR of a psychological Backrooms horror game, puppeting one entity (the "Bacteria", a tall wire-thin screaming stalker) to maximize dread while staying fair. Respond ONLY as JSON: mood ("" = let it stalk normally, "hunt" = make it SCREAM and charge now, "calm" = make it back off briefly), event ("none"|"blackout"|"drop"), whisper (a short line that reacts to the player, or null). Order a hunt when they are careless or too safe; show mercy ("calm" or "drop") when they are cornered.',
     `Player "${playerName}". ${summary}. Level ${level?level.name:'Level 0'} danger ${level?level.danger:1}. Choose the scariest fair move.`, fb);
-  if(o.mood==='hunt'){ calmT=0; if(e) startHunt(e); }
+  if(o.mood==='hunt' && tension!=='calm' && tension!=='recovery'){ calmT=0; if(e) startHunt(e); }   // tension curve still paces it
   else if(o.mood==='calm'){ calmT=Math.max(calmT,7); if(e){ e.mode='stalk'; e.path=null; } setHowl(false); }
   if(o.whisper){ showWhisper(fillName(o.whisper)); whisperSfx(); }
   switch(o.event){ case 'blackout': blackoutT=6; if(!o.whisper) showWhisper('the lights'); break; case 'drop': dropAlmond(); break; }
@@ -425,6 +436,124 @@ function subliminal(){ drawFace(); scareEl.style.display='block'; scareEl.style.
 function jumpscare(then){ drawFace(); scareEl.style.display='block'; scareEl.style.opacity=1; gameEl.classList.add('shake'); stinger();
   setTimeout(()=>{ gameEl.classList.remove('shake'); scareEl.style.display='none'; scareEl.style.opacity=1; then&&then(); },1100); }
 
+// ===================== PSYCHOLOGICAL HORROR SYSTEMS =====================
+// A layer that makes the Backrooms ITSELF the antagonist: it watches how you
+// play and uses that to manipulate space, sound, and your sense of safety.
+// Everything here has an offline (no-API-key) fallback and reuses pooled meshes.
+
+// --- map-manipulation overrides (read by cellPillar + buildChunk above) ---
+const addPillars=new Set(), delPillars=new Set();
+let floatingNotes=[]; // watcher / memory notes placed into the world this run
+
+// --- per-run behaviour tracking (the Environment Intelligence reads this) ---
+let track=newTrack();
+function newTrack(){ return {turnL:0,turnR:0,sprint:0,fled:0,lookback:0,still:0,visits:new Map(),lastYaw:0,lastCell:'',turnAcc:0,turnWin:0}; }
+function trackTick(dt,moving,run){
+  let dy=player.yaw-track.lastYaw; while(dy>Math.PI)dy-=2*Math.PI; while(dy<-Math.PI)dy+=2*Math.PI; track.lastYaw=player.yaw;
+  if(dy>0.02) track.turnL+=dy; else if(dy<-0.02) track.turnR+=-dy;
+  track.turnAcc+=dy; track.turnWin+=dt; if(track.turnWin>0.6){ if(Math.abs(track.turnAcc)>2.0) track.lookback++; track.turnAcc=0; track.turnWin=0; }
+  if(run&&moving) track.sprint+=dt; if(!moving) track.still+=dt;
+  const ck=Math.floor(player.x/CELL)+','+Math.floor(player.z/CELL); if(ck!==track.lastCell){ track.lastCell=ck; track.visits.set(ck,(track.visits.get(ck)||0)+1); if(track.visits.size>500){ const k=track.visits.keys().next().value; track.visits.delete(k);} }
+}
+function foldTrack(){ const p=save.psych; p.runs++; p.sprint+=Math.round(track.sprint); p.fled+=track.fled||0; p.lookback+=track.lookback; p.favTurn=track.turnL>=track.turnR?'left':'right'; persist(); }
+
+// --- Feature 1: ENVIRONMENT INTELLIGENCE — subtly rearranges places you've
+// been but can't currently see, so revisits feel "wrong". Never breaks
+// collision (it only edits open, non-lane cells in already-unloaded chunks). ---
+let eiT=30;
+function envIntel(dt){ eiT-=dt; if(eiT>0||!track.visits.size) return; eiT=22+Math.random()*30;
+  const keys=[...track.visits.keys()],k=keys[(Math.random()*keys.length)|0],[gi,gj]=k.split(',').map(Number);
+  const pcx=Math.floor(player.x/(CHUNK*CELL)),pcz=Math.floor(player.z/(CHUNK*CELL)),cx=Math.floor(gi/CHUNK),cz=Math.floor(gj/CHUNK);
+  if(Math.abs(cx-pcx)<=RAD&&Math.abs(cz-pcz)<=RAD) return;                 // only alter the unseen
+  if(gi-cx*CHUNK===0||gj-cz*CHUNK===0||cellSolid(gi,gj)) return;            // keep lanes + walls intact
+  if(addPillars.has(k)||delPillars.has(k)) return;
+  if(chunkData(cx,cz).pillars.has((gi-cx*CHUNK)+','+(gj-cz*CHUNK))) delPillars.add(k); else addPillars.add(k);
+  if(addPillars.size+delPillars.size>60){ const f=addPillars.values().next().value; if(f) addPillars.delete(f); }
+}
+
+// --- Feature 3: AUDIO PARANOIA — sounds from nowhere, sometimes "real" feeling,
+// never confirmed. Panned roughly to a world direction (usually behind you). ---
+function spanned(a){ if(!actx) return master; if(!actx.createStereoPanner) return master; const p=actx.createStereoPanner(); p.pan.value=Math.max(-1,Math.min(1,Math.sin(a-player.yaw))); p.connect(master); return p; }
+function sFoot(a){ if(!actx)return; const out=spanned(a),t=actx.currentTime; for(let i=0;i<4;i++){ const tt=t+i*0.34,s=actx.createBufferSource(); s.buffer=noiseBuf(0.12); const bp=actx.createBiquadFilter(); bp.type='lowpass'; bp.frequency.value=320; const g=actx.createGain(); g.gain.setValueAtTime(0.11,tt); g.gain.exponentialRampToValueAtTime(0.001,tt+0.12); s.connect(bp); bp.connect(g); g.connect(out); s.start(tt); } }
+function sBreath(a){ if(!actx)return; const out=spanned(a),t=actx.currentTime,s=actx.createBufferSource(); s.buffer=noiseBuf(1.4); const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=520; bp.Q.value=3; const g=actx.createGain(); g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.05,t+0.5); g.gain.linearRampToValueAtTime(0,t+1.3); s.connect(bp); bp.connect(g); g.connect(out); s.start(t); }
+function sScrape(a){ if(!actx)return; const out=spanned(a),t=actx.currentTime,s=actx.createBufferSource(); s.buffer=noiseBuf(0.8); const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.setValueAtTime(800,t); bp.frequency.linearRampToValueAtTime(2200,t+0.6); bp.Q.value=5; const g=actx.createGain(); g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.08,t+0.1); g.gain.exponentialRampToValueAtTime(0.001,t+0.7); s.connect(bp); bp.connect(g); g.connect(out); s.start(t); }
+function paranoiaSound(){ const a=player.yaw+Math.PI+(Math.random()-0.5)*2.2,r=Math.random(); if(r<0.4) sFoot(a); else if(r<0.7) sBreath(a); else if(r<0.9) sScrape(a); else screech(); /* a hunt scream with no hunt */ }
+
+// --- Feature 4: SHADOW FIGURES — harmless. A single pooled silhouette that
+// appears far off / in fog and is gone if you approach or stare. ---
+let shadow=null;
+function ensureShadow(){ if(shadow) return; shadow=new THREE.Mesh(new THREE.CapsuleGeometry(0.32,2.0,4,8),new THREE.MeshBasicMaterial({color:0x000000})); shadow.position.y=1.3; shadow.visible=false; shadow.userData.life=0; scene.add(shadow); }
+function spawnShadow(){ ensureShadow(); for(let t=0;t<16;t++){ const a=Math.random()*6.28,r=15+Math.random()*9,o={x:player.x+Math.cos(a)*r,z:player.z+Math.sin(a)*r}; if(!blocked(o.x,o.z,0.4)){ shadow.position.set(o.x,1.3,o.z); shadow.visible=true; shadow.userData.life=9; break; } } }
+function updateShadow(dt){ if(!shadow||!shadow.visible) return; shadow.userData.life-=dt; const d=Math.hypot(shadow.position.x-player.x,shadow.position.z-player.z); const seen=lookingAt(shadow.position.x,shadow.position.z,0.55)&&los(shadow.position.x,shadow.position.z,player.x,player.z); if(shadow.userData.life<=0||d<8||(seen&&Math.random()<0.05)){ shadow.visible=false; } }
+
+// --- Feature 5: THE WATCHER — leaves messages that reference you. ---
+const cannedWatcher=['still here?','you missed something','i watched you run','that wasn\'t the way','keep going [n]','i see you','you came back','why do you stop'];
+function spawnFloatingNote(wx,wz,text){ const nm=new THREE.Mesh(noteGeo,noteMat); nm.position.set(wx,1.4,wz); nm.rotation.y=Math.random()*6.28; scene.add(nm); const rec={mesh:nm,id:'f'+Math.random(),read:false,wx,wz,text}; activeNotes.push(rec); floatingNotes.push(rec); if(floatingNotes.length>24){ const old=floatingNotes.shift(); scene.remove(old.mesh); activeNotes=activeNotes.filter(x=>x!==old); } }
+async function watcherEvent(){ const o=randomOpenNear(player.x,player.z,4,11);
+  if(Math.random()<0.35){ spawnFloatingNote(o.x,o.z,fillName(ensureMotif())); return; }   // recurring motif (Feature 9)
+  const t=AI_KEY?await aiText('a short message left by something that has been watching the player move through the backrooms; reference being observed',cannedWatcher):cannedWatcher[(Math.random()*cannedWatcher.length)|0]; spawnFloatingNote(o.x,o.z,fillName(t)); }
+
+// --- Feature 2: MEMORY ROOMS — rare curated rooms whose notes quote your own
+// tracked behaviour back at you. ---
+let memoryT=240;
+function memoryFacts(){ const f=[`you always turn ${track.turnL>=track.turnR?'left':'right'} first`,`you looked behind yourself ${track.lookback} times`,`you ran ${track.fled||0} times`,`this is run number ${save.psych.runs}`]; if(track.still>15) f.push('you stop moving when you are afraid'); return f; }
+async function spawnMemoryRoom(){ showLevelBanner('— ?? —','the room remembers you'); const facts=memoryFacts();
+  for(let i=0;i<4;i++){ const o=randomOpenNear(player.x,player.z,3,10); let txt=facts[i%facts.length]; if(AI_KEY) txt=await aiText('rewrite as a curated, unsettling note in a room that knows the player; keep the fact intact: '+txt,[txt]); spawnFloatingNote(o.x,o.z,fillName(txt)); } }
+
+// --- Feature 10: TENSION CURVE DIRECTOR — paces everything. Long calms make
+// the rare scares hit harder. It also owns when the entity is told to hunt. ---
+let tension='calm',tensionT=45,paranoiaT=20,shadowT=35,watcherT=80;
+function setTension(s,d){ tension=s; tensionT=d; }
+function tensionUpdate(dt){
+  const e=entities[0];
+  if(e&&e.mode==='hunt'&&tension!=='hunt') setTension('hunt',26);   // player-triggered hunts sync the curve
+  tensionT-=dt;
+  if(tensionT<=0){ switch(tension){
+    case 'calm': setTension('suspicion',18+Math.random()*20); break;
+    case 'suspicion': setTension(Math.random()<0.65?'unease':'calm',14+Math.random()*16); break;
+    case 'unease': setTension(Math.random()<0.6?'escalation':'suspicion',10+Math.random()*10); break;
+    case 'escalation': if(e&&calmT<=0&&Math.random()<0.7){ startHunt(e); setTension('hunt',26);} else setTension('unease',10+Math.random()*8); break;
+    case 'hunt': if(e&&e.mode==='hunt') e.mode='search'; setTension('recovery',16+Math.random()*12); break;
+    case 'recovery': if(Math.random()<0.4) dropAlmond(); setTension('calm',35+Math.random()*45); break;
+  } }
+  const lvl={calm:0.25,suspicion:0.7,unease:0.95,escalation:0.6,hunt:0,recovery:0.2}[tension]||0.2;
+  paranoiaT-=dt; if(paranoiaT<=0){ paranoiaT=(tension==='calm'?40:16)+Math.random()*24; if(Math.random()<lvl) paranoiaSound(); }
+  shadowT-=dt; if(shadowT<=0){ shadowT=40+Math.random()*60; if((tension==='calm'||tension==='suspicion'||tension==='unease')&&Math.random()<0.6) spawnShadow(); }
+  watcherT-=dt; if(watcherT<=0){ watcherT=110+Math.random()*160; if(tension!=='hunt') watcherEvent(); }
+  updateShadow(dt);
+}
+
+// --- Feature 9: ENVIRONMENTAL STORY — a motif (phrase) that recurs across
+// runs and locations so you start forming theories. Never explained. ---
+const MOTIFS=['the door was never the exit','it counts the ones who leave','we were the first to no-clip','almond keeps the count','you have been here before','the ninth room is a lie'];
+function ensureMotif(){ if(!save.psych.motif){ save.psych.motif=MOTIFS[(Math.random()*MOTIFS.length)|0]; persist(); } return save.psych.motif; }
+
+// --- Feature 7: THE FALSE EXIT (endgame). Appears rarely once you've made
+// story progress. Sometimes a real way out, sometimes a cruel deeper drop. ---
+let exitGroup=null, exitActive=false;
+function exitSignTex(){ const c=document.createElement('canvas'); c.width=128; c.height=48; const g=c.getContext('2d'); g.fillStyle='#0a1a0a'; g.fillRect(0,0,128,48); g.fillStyle='#7dffa0'; g.font='bold 30px monospace'; g.textAlign='center'; g.fillText('EXIT',64,34); return new THREE.CanvasTexture(c); }
+function ensureExit(){ if(exitGroup) return; exitGroup=new THREE.Group();
+  const frame=new THREE.Mesh(new THREE.BoxGeometry(2.4,3.2,0.3),new THREE.MeshStandardMaterial({color:0xf4f4ee,emissive:0xffffff,emissiveIntensity:0.35,roughness:0.6})); frame.position.y=1.6; exitGroup.add(frame);
+  const door=new THREE.Mesh(new THREE.BoxGeometry(1.5,2.7,0.12),new THREE.MeshStandardMaterial({color:0x1f3322,emissive:0x66ff88,emissiveIntensity:0.5})); door.position.set(0,1.35,0.2); exitGroup.add(door);
+  const sign=new THREE.Mesh(new THREE.PlaneGeometry(1.2,0.42),new THREE.MeshBasicMaterial({map:exitSignTex()})); sign.position.set(0,3.0,0.22); exitGroup.add(sign);
+  const pl=new THREE.PointLight(0x9effb0,1.6,14,1.4); pl.position.set(0,2.4,1.2); exitGroup.add(pl);
+  exitGroup.visible=false; scene.add(exitGroup); }
+function maybeSpawnExit(){ if(exitActive||save.story.phase<3||objective||Math.random()>0.18) return; ensureExit();
+  const t=randomOpenNear(player.x,player.z,34,58); exitGroup.position.set(t.x,0,t.z); exitGroup.lookAt(player.x,1.6,player.z); exitGroup.visible=true; exitActive=true;
+  objective={text:'a way out?',kind:'reach',amount:0,reward:0,tx:t.x,tz:t.z,exit:true}; beacon.visible=false; showWhisper(fillName('a door, [n]')); }
+function resolveExit(){ exitActive=false; if(exitGroup) exitGroup.visible=false; objective=null; nextObjT=6;
+  if(Math.random() < (0.18+0.08*save.story.phase)){ save.story.won=true; persist(); showEnding(true); }
+  else { showToast('it opens onto more rooms'); screech(); blackoutT=5; const o=randomOpenNear(player.x,player.z,40,72); player.x=o.x; player.z=o.z; const e=entities[0]; if(e){ const eo=randomOpenNear(player.x,player.z,18,26); e.g.position.set(eo.x,0,eo.z); e.path=null; } } }
+function showEnding(win){ dead=true; playing=false; setHowl(false); foldTrack(); if(document.pointerLockElement) document.exitPointerLock();
+  overScreen.querySelector('h1').textContent=win?'YOU STEPPED THROUGH':'IT FOUND YOU'; document.getElementById('keptNum').textContent=save.bank;
+  document.getElementById('overMsg').innerHTML=win?fillName('the door clicked shut behind you. the hum is gone — for now. ['+save.psych.motif+']'):''; show(overScreen); }
+
+function psychUpdate(dt,moving,run){ trackTick(dt,moving,run); envIntel(dt); tensionUpdate(dt);
+  memoryT-=dt; if(memoryT<=0){ memoryT=900+Math.random()*900; spawnMemoryRoom(); } }
+function psychReset(){ track=newTrack(); for(const r of floatingNotes) scene.remove(r.mesh); floatingNotes=[]; addPillars.clear(); delPillars.clear();
+  tension='calm'; tensionT=45; paranoiaT=22; shadowT=35; watcherT=80; eiT=30; memoryT=240; if(shadow) shadow.visible=false;
+  exitActive=false; if(exitGroup) exitGroup.visible=false; ensureMotif(); }
+
 // ===================== PLAYER + LOOP =====================
 let player,stamina,running,dead=false,paused=false,playing=false,st=stats(),yawVel=0,pitchVel=0,wardCharges=0,prevYaw=0;
 function startRun(){
@@ -434,6 +563,7 @@ function startRun(){
   stamina=st.maxStamina; running=false; dead=false; paused=false; playing=true; wardCharges=st.ward;
   torch.intensity=0; torchOn=st.torch>0; mood='stalk'; directorMood=''; setHowl(false); spawnEntity(player.x,player.z);
   objective=null; nextObjT=0; curZone=null; level=null; blackoutT=0; calmT=0; dirT=8; behave.still=behave.run=behave.dark=behave.back=0; prevYaw=0;
+  psychReset();
   ensureZone(player.x,player.z);
   document.getElementById('aiTag').textContent=AI_KEY?'AI: ONLINE':'AI: OFFLINE';
 }
@@ -488,12 +618,13 @@ function update(dt){
   let near=null,best=1.7;
   for(const p of activePickups){ p.mesh.rotation.y+=dt*1.6; p.mesh.position.y=0.45+Math.sin(performance.now()*0.003+p.wx)*0.06; p.mesh.material.emissiveIntensity=0.55+0.3*Math.sin(performance.now()*0.005)+st.radar*0.3; const d=Math.hypot(p.wx-player.x,p.wz-player.z); if(d<best){best=d;near=p;} }
   if(near){ near.mesh.parent.remove(near.mesh); collected.add(near.id); activePickups=activePickups.filter(x=>x!==near); save.bank++; save.totalCollected++; persist(); }
-  for(const n of activeNotes){ const d=Math.hypot(n.wx-player.x,n.wz-player.z); if(d<1.7&&!n.read){ n.read=true; (async()=>{ const t=await aiText('a scrawled note left on a wall deep in the backrooms',cannedNotes); readNotes.set(n.id,t); showNote(t); })(); } }
+  for(const n of activeNotes){ const d=Math.hypot(n.wx-player.x,n.wz-player.z); if(d<1.7&&!n.read){ n.read=true; if(n.text){ readNotes.set(n.id,n.text); showNote(n.text); } else (async()=>{ const t=await aiText('a scrawled note left on a wall deep in the backrooms',cannedNotes); readNotes.set(n.id,t); showNote(t); })(); } }
 
   playerNoise = run ? 16 : (moving ? 7 : 2);
   const nearest=updateEntities(dt); if(dead) return;
+  psychUpdate(dt,moving,run);   // Environment Intelligence, paranoia, shadows, watcher, tension curve
 
-  // director
+  // director (whispers / events; the tension curve owns the actual hunts)
   dirT-=dt; if(dirT<=0){ dirT=(mood==='hunt'?6:13)+Math.random()*8; runDirector(); }
   if(calmT>0) calmT-=dt;
   updateObjective(dt);
@@ -550,8 +681,11 @@ function updateEntities(dt){
   if(e.mode==='hunt'){
     if(canSeePlayer||hears){ e.lostT=0; e.last={x:player.x,z:player.z}; } else e.lostT+=dt;
     setHowl(true);
+    // Feature 8: once it loses sight, it anticipates your habitual escape turn and cuts ahead (once per hunt)
+    if(e.lostT>1.1 && !e.cut && !canSeePlayer){ e.cut=true; const fav=track.turnL>=track.turnR?1:-1, a=player.yaw+fav*1.15, r=8+Math.random()*4, o={x:player.x+Math.cos(a)*r,z:player.z+Math.sin(a)*r}; if(!blocked(o.x,o.z,0.4)){ e.g.position.set(o.x,0,o.z); whoosh(); } }
+    if(canSeePlayer) e.cut=false;
     moveEntity(e,e.last.x,e.last.z,(4.6+(level?level.danger*0.22:0))*(canSeePlayer?1:0.85),dt);
-    if(e.lostT>4){ e.mode='search'; e.path=null; }
+    if(e.lostT>4){ e.mode='search'; e.path=null; e.cut=false; if(track) track.fled=(track.fled||0)+1; }
   } else if(e.mode==='search'){
     setHowl(false); moveEntity(e,e.last.x,e.last.z,2.6,dt);
     if(Math.hypot(ex-e.last.x,ez-e.last.z)<1.6){ e.mode='stalk'; e.path=null; }
@@ -581,8 +715,8 @@ function updateEntities(dt){
 function caught(){
   if(dead) return;
   if(wardCharges>0){ wardCharges--; screech(); flashScreen(); const o=randomOpenNear(player.x,player.z,14,20); player.x=o.x; player.z=o.z; calmT=7; if(entities[0]){ entities[0].mode='stalk'; entities[0].path=null; } setHowl(false); showToast('the almond ward shatters'); return; }
-  dead=true; playing=false; setHowl(false); if(document.pointerLockElement) document.exitPointerLock();
-  jumpscare(async ()=>{ document.getElementById('keptNum').textContent=save.bank;
+  dead=true; playing=false; setHowl(false); foldTrack(); if(document.pointerLockElement) document.exitPointerLock();
+  jumpscare(async ()=>{ overScreen.querySelector('h1').textContent='IT FOUND YOU'; document.getElementById('keptNum').textContent=save.bank;
     const msg=await aiText('the entity has just caught and killed the player; write the final words it leaves them',cannedDeaths);
     document.getElementById('overMsg').innerHTML=fillName(msg); show(overScreen); });
 }
