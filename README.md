@@ -1,32 +1,51 @@
-# 🟡 The Backrooms — a text-adventure horror game
+# 🟡 The Backrooms — First-Person Game
 
-You've no-clipped out of reality into the Backrooms: an endless maze of damp,
-mono-yellow rooms lit by buzzing fluorescent lights. An AI game master narrates
-your descent and reacts to whatever you type. Stay quiet, manage your **sanity**
-and **health**, find **Almond Water**, and look for a way out.
+A fully in-browser, **first-person 3D Backrooms** survival game. Walk the endless
+mono-yellow rooms with WASD or touch, collect **Almond Water**, keep your sanity,
+avoid the thing in the halls, and spend what you collect on **permanent upgrades**.
 
-Built on [Streamlit](https://streamlit.io) with OpenAI as the game master.
+- 🎮 **Play file:** [`index.html`](index.html) — pure WebGL (Three.js), **no install, no API key**.
+- 📱 **Works on mobile** — on-screen joystick + look/run/torch buttons.
+- 💾 **Upgrades persist** in your browser (localStorage), so you keep them between runs.
 
-### Features
+> There's also a chat-driven **text-adventure** version in [`streamlit_app.py`](streamlit_app.py)
+> (the original AI game-master mode, needs an OpenAI key).
 
-- Free-text actions — type anything ("listen", "hide under the desk", "run").
-- Live **Level / Sanity / Health / Items** status panel.
-- Atmospheric liminal-yellow styling.
-- Permadeath with a "New descent" button to start over.
+## Controls
 
-### How to run it on your own machine
+| | Move | Look | Sprint | Drink Almond Water | Flashlight | Upgrades |
+|---|---|---|---|---|---|---|
+| **Desktop** | WASD / arrows | mouse (click to lock) | Shift | E | F | Esc |
+| **Mobile** | left thumb stick | right side drag | RUN button | on-screen prompt | TORCH button | ☰ MENU |
 
-1. Install the requirements
+## Upgrades (spend Almond Water 🥛)
 
-   ```
-   $ pip install -r requirements.txt
-   ```
+Fleet Feet (speed) · Deep Lungs (stamina) · Marathoner (sprint efficiency) ·
+Steady Mind (sanity) · Pure Almond (restore) · Flashlight · Sixth Sense (bottle glow).
 
-2. Run the app
+## Play it
 
-   ```
-   $ streamlit run streamlit_app.py
-   ```
+### Easiest — just open the file
+Download `index.html` and open it in any modern browser. Needs internet the first
+time to load Three.js from a CDN.
 
-3. Paste your [OpenAI API key](https://platform.openai.com/account/api-keys) and
-   begin your descent.
+### Get a shareable mobile link (free)
+
+**GitHub Pages:** repo → Settings → Pages → deploy from this branch → your game is at
+`https://<user>.github.io/<repo>/`.
+
+**Or any static host** (Vercel / Netlify / Cloudflare Pages): point it at this repo;
+`index.html` is the entry point. No build step.
+
+## Run the text-adventure version
+
+```
+pip install -r requirements.txt
+streamlit run streamlit_app.py
+```
+
+## Extending it
+
+The game is one self-contained file with clearly separated sections (save/progression,
+world generation, textures, renderer, pickups, entity, player, input, game loop, HUD,
+audio). See [`PROMPT.md`](PROMPT.md) for a ready-to-paste prompt to request new features.
