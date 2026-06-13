@@ -250,29 +250,53 @@ function clearWorld(){ for(const [,g] of chunks) pruneChunk(g); chunks.clear(); 
 // Core fear: it freezes while you look at it; when unseen it creeps toward you
 // and sometimes teleports behind you. Contact = death (jumpscare). The AI sets
 // its global "mood" which changes how it behaves.
-let entities=[]; let mood='lurk'; // lurk | stalk | hunt | ambush | calm
-function makeEntity(px,pz,temp){
-  const g=new THREE.Group();
-  const mat=new THREE.MeshStandardMaterial({color:0x060509,roughness:1});
-  const torso=new THREE.Mesh(new THREE.CapsuleGeometry(0.34,1.9,4,8),mat); torso.position.y=1.5; g.add(torso);
-  // wrong-length limbs
-  for(const sgn of [-1,1]){ const arm=new THREE.Mesh(new THREE.CapsuleGeometry(0.09,1.7,3,6),mat); arm.position.set(sgn*0.42,1.4,0); arm.rotation.z=sgn*0.18; g.add(arm); }
-  const head=new THREE.Mesh(new THREE.SphereGeometry(0.28,10,10),mat); head.position.y=2.55; g.add(head);
-  const em=new THREE.MeshBasicMaterial({color:0xffffff}); const mouthMat=new THREE.MeshBasicMaterial({color:0xefeae0});
-  for(const dx of [-0.11,0.11]){ const e=new THREE.Mesh(new THREE.SphereGeometry(0.05,8,8),em); e.position.set(dx,2.6,0.24); g.add(e); }
-  const grin=new THREE.Mesh(new THREE.BoxGeometry(0.32,0.06,0.04),mouthMat); grin.position.set(0,2.46,0.25); g.add(grin); // smiler grin
-  const o=randomOpenNear(px,pz,18,26); g.position.set(o.x,0,o.z); scene.add(g);
-  return {g,torso,head,eyes:em,phase:Math.random()*6.28,goal:null,life:temp?24+Math.random()*14:Infinity,temp:!!temp,teleT:6+Math.random()*6,seenT:0};
-}
-function spawnEntity(px,pz,temp){ if(entities.length>=6) return; entities.push(makeEntity(px,pz,temp)); }
-function clearEntities(){ for(const e of entities) scene.remove(e.g); entities=[]; }
-function setEntityCount(n){ n=Math.max(1,Math.min(5,n)); let perm=entities.filter(e=>!e.temp);
-  while(perm.length<n){ const e=makeEntity(player.x,player.z,false); entities.push(e); perm.push(e); }
-  while(perm.length>n){ const e=perm.pop(); scene.remove(e.g); entities=entities.filter(x=>x!==e); } }
+let entities=[]; let mood='stalk'; let directorMood=''; let playerNoise=2; // mood mirrors the entity, for UI cues
 
-// is a world point within the player's view cone (i.e. being looked at)?
-const fwdVec=new THREE.Vector3();
-function lookingAt(x,z,coneDot=0.55){ const fx=-Math.sin(player.yaw),fz=-Math.cos(player.yaw); let dx=x-player.x,dz=z-player.z; const d=Math.hypot(dx,dz)||1; return (fx*dx+fz*dz)/d>coneDot; }
+// --- BACTERIA (a.k.a. The Lifeform): a tall, wire-thin black humanoid whose
+// arms hang to the floor. It wanders / stalks, and when it detects you (sight
+// or sound) it SCREAMS and sprints, navigating walls to reach you. ---
+function makeEntity(px,pz){
+  const g=new THREE.Group(); const mat=new THREE.MeshStandardMaterial({color:0x050507,roughness:1,metalness:0.12});
+  const torso=new THREE.Mesh(new THREE.CapsuleGeometry(0.16,2.1,4,8),mat); torso.position.y=2.0; g.add(torso);
+  const neck=new THREE.Mesh(new THREE.CapsuleGeometry(0.06,0.4,3,6),mat); neck.position.y=2.95; g.add(neck);
+  const head=new THREE.Mesh(new THREE.SphereGeometry(0.19,10,10),mat); head.position.y=3.3; g.add(head);
+  const arms=[],legs=[];
+  for(const s of [-1,1]){
+    const arm=new THREE.Mesh(new THREE.CapsuleGeometry(0.05,2.6,3,6),mat); arm.position.set(s*0.2,1.9,0.02); arm.rotation.z=s*0.09; g.add(arm); arms.push(arm);
+    const leg=new THREE.Mesh(new THREE.CapsuleGeometry(0.07,1.85,3,6),mat); leg.position.set(s*0.1,0.95,0); g.add(leg); legs.push(leg);
+  }
+  const o=randomOpenNear(px,pz,20,28); g.position.set(o.x,0,o.z);
+  return {g,torso,head,arms,legs,mode:'stalk',phase:Math.random()*6.28,path:null,pathT:0,lostT:99,teleT:8+Math.random()*6,last:{x:o.x,z:o.z}};
+}
+function spawnEntity(px,pz){ if(entities.length) return; const e=makeEntity(px,pz); scene.add(e.g); entities.push(e); }
+function clearEntities(){ for(const e of entities) scene.remove(e.g); entities=[]; }
+function setEntityCount(){ if(!entities.length) spawnEntity(player.x,player.z); } // one at a time, for now
+
+// player view cone (is the point roughly centered in view?)
+function lookingAt(x,z,coneDot=0.5){ const fx=-Math.sin(player.yaw),fz=-Math.cos(player.yaw); let dx=x-player.x,dz=z-player.z; const d=Math.hypot(dx,dz)||1; return (fx*dx+fz*dz)/d>coneDot; }
+// line of sight: walls / pillars block it
+function los(ax,az,bx,bz){ const dx=bx-ax,dz=bz-az,d=Math.hypot(dx,dz),steps=Math.max(1,Math.ceil(d/(CELL*0.4))); for(let i=1;i<steps;i++){ const t=i/steps,x=ax+dx*t,z=az+dz*t; if(cellSolid(Math.floor(x/CELL),Math.floor(z/CELL))||cellPillar(Math.floor(x/CELL),Math.floor(z/CELL))) return false; } return true; }
+function cellWalkable(gi,gj){ return !cellSolid(gi,gj)&&!cellPillar(gi,gj); }
+// bounded grid BFS so it can actually navigate corridors
+function findPath(sx,sz,tx,tz,maxNodes=700){
+  const si=Math.floor(sx/CELL),sj=Math.floor(sz/CELL),ti=Math.floor(tx/CELL),tj=Math.floor(tz/CELL);
+  if((Math.abs(si-ti)+Math.abs(sj-tj))>26) return null; if(si===ti&&sj===tj) return [[tx,tz]];
+  const q=[[si,sj]],seen=new Set([si+','+sj]),prev=new Map(); let n=0;
+  while(q.length&&n<maxNodes){ const [ci,cj]=q.shift(); n++;
+    if(ci===ti&&cj===tj){ const path=[]; let k=ci+','+cj; while(k!==si+','+sj){ const [a,b]=k.split(',').map(Number); path.push([(a+0.5)*CELL,(b+0.5)*CELL]); k=prev.get(k);} path.reverse(); path.push([tx,tz]); return path; }
+    for(const [di,dj] of [[1,0],[-1,0],[0,1],[0,-1]]){ const ni=ci+di,nj=cj+dj,key=ni+','+nj; if(seen.has(key)||!cellWalkable(ni,nj)) continue; seen.add(key); prev.set(key,ci+','+cj); q.push([ni,nj]); } }
+  return null;
+}
+function moveEntity(e,tx,tz,speed,dt){
+  e.pathT-=dt;
+  if(e.pathT<=0||!e.path||!e.path.length){ e.path=findPath(e.g.position.x,e.g.position.z,tx,tz); e.pathT=0.35; }
+  let wp; if(e.path&&e.path.length){ wp=e.path[0]; if(Math.hypot(wp[0]-e.g.position.x,wp[1]-e.g.position.z)<0.6){ e.path.shift(); wp=e.path[0]; } }
+  if(!wp) wp=[tx,tz];
+  const gx=wp[0]-e.g.position.x,gz=wp[1]-e.g.position.z,gd=Math.hypot(gx,gz)||1,step=speed*dt;
+  const nx=e.g.position.x+gx/gd*step,nz=e.g.position.z+gz/gd*step;
+  if(!blocked(nx,e.g.position.z,0.34)) e.g.position.x=nx; else e.pathT=0;
+  if(!blocked(e.g.position.x,nz,0.34)) e.g.position.z=nz; else e.pathT=0;
+}
 
 // ===================== AUDIO (psychological) =====================
 let actx=null,master=null,droneG=null,started=false;
@@ -290,6 +314,16 @@ function whisperSfx(){ if(!actx) return; const t=actx.currentTime; const src=act
 function stinger(){ if(!actx) return; const t=actx.currentTime; const src=actx.createBufferSource(); src.buffer=noiseBuf(1.0); const g=actx.createGain(); g.gain.setValueAtTime(0.0,t); g.gain.linearRampToValueAtTime(0.7,t+0.01); g.gain.exponentialRampToValueAtTime(0.001,t+0.9); src.connect(g); g.connect(master);
   [220,233,466,930].forEach(f=>{ const o=actx.createOscillator(); o.type='sawtooth'; o.frequency.value=f; const og=actx.createGain(); og.gain.setValueAtTime(0.18,t); og.gain.exponentialRampToValueAtTime(0.001,t+0.8); o.connect(og); og.connect(master); o.start(t); o.stop(t+0.85); }); src.start(t); }
 function whoosh(){ if(!actx) return; const t=actx.currentTime; const src=actx.createBufferSource(); src.buffer=noiseBuf(0.5); const bp=actx.createBiquadFilter(); bp.type='lowpass'; bp.frequency.setValueAtTime(200,t); bp.frequency.linearRampToValueAtTime(1800,t+0.4); const g=actx.createGain(); g.gain.setValueAtTime(0.18,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.45); src.connect(bp); bp.connect(g); g.connect(master); src.start(t); }
+// looping distorted howl while the Bacteria is hunting
+let howlGain=null;
+function ensureHowl(){ if(howlGain||!actx) return; howlGain=actx.createGain(); howlGain.gain.value=0; howlGain.connect(master);
+  const lfo=actx.createOscillator(); lfo.type='sine'; lfo.frequency.value=5.5; const lg=actx.createGain(); lg.gain.value=22; lfo.connect(lg); lfo.start();
+  [98,104,156].forEach(f=>{ const o=actx.createOscillator(); o.type='sawtooth'; o.frequency.value=f; lg.connect(o.frequency); const g=actx.createGain(); g.gain.value=0.28; o.connect(g); g.connect(howlGain); o.start(); });
+  const src=actx.createBufferSource(); src.buffer=noiseBuf(2); src.loop=true; const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=850; bp.Q.value=1.8; const ng=actx.createGain(); ng.gain.value=0.25; src.connect(bp); bp.connect(ng); ng.connect(howlGain); src.start(); }
+function setHowl(on){ ensureHowl(); if(howlGain) howlGain.gain.setTargetAtTime(on?0.2:0, actx.currentTime, 0.25); }
+function screech(){ if(!actx) return; const t=actx.currentTime; // the moment it sees you
+  [180,190,360,540,720].forEach(f=>{ const o=actx.createOscillator(); o.type='sawtooth'; o.frequency.setValueAtTime(f*0.6,t); o.frequency.exponentialRampToValueAtTime(f*1.5,t+0.5); const g=actx.createGain(); g.gain.setValueAtTime(0.0,t); g.gain.linearRampToValueAtTime(0.16,t+0.03); g.gain.exponentialRampToValueAtTime(0.001,t+0.7); o.connect(g); g.connect(master); o.start(t); o.stop(t+0.75); });
+  const src=actx.createBufferSource(); src.buffer=noiseBuf(0.7); const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=1200; bp.Q.value=1.2; const ng=actx.createGain(); ng.gain.setValueAtTime(0.4,t); ng.gain.exponentialRampToValueAtTime(0.001,t+0.7); src.connect(bp); bp.connect(ng); ng.connect(master); src.start(t); }
 
 // ===================== AI =====================
 let AI_KEY=null, playerName='you';
@@ -351,15 +385,16 @@ function updateObjective(dt){ if(!objective){ if(nextObjT>0){ nextObjT-=dt; if(n
 let dirT=8,blackoutT=0,calmT=0,baseEmis=0.85;
 const behave={still:0,run:0,dark:0,back:0};
 async function runDirector(){
-  let nearest=999,unseen=true; for(const e of entities){ const d=Math.hypot(e.g.position.x-player.x,e.g.position.z-player.z); if(d<nearest){ nearest=d; unseen=!lookingAt(e.g.position.x,e.g.position.z); } }
-  const summary=`distance ${Math.round(nearest)}m, ${unseen?'it is NOT in your view':'you are watching it'}; player has been ${behave.run>behave.still?'running':'standing still'}, ${behave.dark>3?'in the dark, ':''}glanced behind ${behave.back} times`;
-  const fb=()=>{ const r=Math.random(); let m = nearest<6?'hunt' : r<0.5?'lurk' : r<0.78?'stalk' : r<0.9?'ambush':'calm'; let ev = r<0.18?'blackout' : (nearest>18&&r<0.3)?'swarm' : r<0.4?'drop':'none'; return {mood:m,event:ev,whisper:null}; };
-  const o=await aiJSON('You are the unseen DIRECTOR of a psychological Backrooms horror game. You puppet the entity to maximize dread while staying fair. Respond ONLY as JSON: mood ("lurk"=creep when unwatched,"stalk"=shadow at fog-edge,"hunt"=charge now,"ambush"=teleport near and wait,"calm"=back off), event ("none"|"blackout"|"swarm"|"drop"), whisper (a short line shown to the player that reacts to their behavior, or null). Punish carelessness; show brief mercy when relentless.',
+  const e=entities[0]; let nearest=999,unseen=true,hunting=false;
+  if(e){ nearest=Math.hypot(e.g.position.x-player.x,e.g.position.z-player.z); unseen=!(lookingAt(e.g.position.x,e.g.position.z)&&los(e.g.position.x,e.g.position.z,player.x,player.z)); hunting=e.mode==='hunt'; }
+  const summary=`distance ${Math.round(nearest)}m, ${unseen?'it is NOT in your view':'you have eyes on it'}, it is currently ${hunting?'HUNTING you':'stalking'}; player is ${behave.run>behave.still?'running (loud)':'moving carefully'}${behave.dark>3?', and in the dark':''}`;
+  const fb=()=>{ const r=Math.random(); return {mood: r<0.58?'':(r<0.82?'hunt':'calm'), event: r<0.16?'blackout':(r<0.34?'drop':'none'), whisper:null}; };
+  const o=await aiJSON('You are the unseen DIRECTOR of a psychological Backrooms horror game, puppeting one entity (the "Bacteria", a tall wire-thin screaming stalker) to maximize dread while staying fair. Respond ONLY as JSON: mood ("" = let it stalk normally, "hunt" = make it SCREAM and charge now, "calm" = make it back off briefly), event ("none"|"blackout"|"drop"), whisper (a short line that reacts to the player, or null). Order a hunt when they are careless or too safe; show mercy ("calm" or "drop") when they are cornered.',
     `Player "${playerName}". ${summary}. Level ${level?level.name:'Level 0'} danger ${level?level.danger:1}. Choose the scariest fair move.`, fb);
-  if(['lurk','stalk','hunt','ambush','calm'].includes(o.mood)) mood=o.mood;
+  if(o.mood==='hunt'){ calmT=0; if(e) startHunt(e); }
+  else if(o.mood==='calm'){ calmT=Math.max(calmT,7); if(e){ e.mode='stalk'; e.path=null; } setHowl(false); }
   if(o.whisper){ showWhisper(fillName(o.whisper)); whisperSfx(); }
-  switch(o.event){ case 'blackout': blackoutT=6; if(!o.whisper) showWhisper('the lights'); break; case 'swarm': spawnEntity(player.x,player.z,true); spawnEntity(player.x,player.z,true); break; case 'drop': dropAlmond(); break; }
-  if(mood==='hunt') whoosh();
+  switch(o.event){ case 'blackout': blackoutT=6; if(!o.whisper) showWhisper('the lights'); break; case 'drop': dropAlmond(); break; }
 }
 function dropAlmond(){ const t=randomOpenNear(player.x,player.z,4,9); const mesh=new THREE.Mesh(almondGeo,almondMat.clone()); mesh.position.set(t.x,0.45,t.z); scene.add(mesh); activePickups.push({mesh,id:'drop'+Math.random(),wx:t.x,wz:t.z}); showToast('a bottle appears'); }
 
@@ -397,7 +432,7 @@ function startRun(){
   st=stats(); player={x:CHUNK*CELL/2,z:CHUNK*CELL/2,yaw:0,pitch:0}; if(blocked(player.x,player.z,0.4)){ const o=randomOpenNear(player.x,player.z,2,8); player.x=o.x; player.z=o.z; }
   ensureChunks(player.x,player.z); camera.position.set(player.x,EYE,player.z);
   stamina=st.maxStamina; running=false; dead=false; paused=false; playing=true; wardCharges=st.ward;
-  torch.intensity=0; torchOn=st.torch>0; mood='lurk'; spawnEntity(player.x,player.z,false);
+  torch.intensity=0; torchOn=st.torch>0; mood='stalk'; directorMood=''; setHowl(false); spawnEntity(player.x,player.z);
   objective=null; nextObjT=0; curZone=null; level=null; blackoutT=0; calmT=0; dirT=8; behave.still=behave.run=behave.dark=behave.back=0; prevYaw=0;
   ensureZone(player.x,player.z);
   document.getElementById('aiTag').textContent=AI_KEY?'AI: ONLINE':'AI: OFFLINE';
@@ -455,6 +490,7 @@ function update(dt){
   if(near){ near.mesh.parent.remove(near.mesh); collected.add(near.id); activePickups=activePickups.filter(x=>x!==near); save.bank++; save.totalCollected++; persist(); }
   for(const n of activeNotes){ const d=Math.hypot(n.wx-player.x,n.wz-player.z); if(d<1.7&&!n.read){ n.read=true; (async()=>{ const t=await aiText('a scrawled note left on a wall deep in the backrooms',cannedNotes); readNotes.set(n.id,t); showNote(t); })(); } }
 
+  playerNoise = run ? 16 : (moving ? 7 : 2);
   const nearest=updateEntities(dt); if(dead) return;
 
   // director
@@ -492,37 +528,60 @@ function update(dt){
 }
 
 let nearestUnseen=true,nearestSeen=false,nearestSide=1;
+function startHunt(e){ if(e.mode==='hunt'||calmT>0) return; e.mode='hunt'; e.lostT=0; e.last={x:player.x,z:player.z}; e.path=null; screech(); setHowl(true); showWhisper(fillName(Math.random()<0.5?'[n]':'found you')); }
 function updateEntities(dt){
-  let nearest=999;
-  for(let i=entities.length-1;i>=0;i--){ const e=entities[i];
-    if(e.temp){ e.life-=dt; if(e.life<=0){ scene.remove(e.g); entities.splice(i,1); continue; } }
-    const ex=e.g.position.x,ez=e.g.position.z,d=Math.hypot(ex-player.x,ez-player.z);
-    const seen=lookingAt(ex,ez,0.5)&&d<30;
-    // jitter / unnatural idle
-    e.phase+=dt*5; e.head.rotation.z=Math.sin(e.phase)*0.08; e.torso.position.y=1.5+Math.sin(e.phase*0.7)*0.02;
-    let move=0; // distance it may move this frame
-    if(mood==='calm'){ if(!e.goal||Math.hypot(ex-e.goal.x,ez-e.goal.z)<2) e.goal=randomOpenNear(ex,ez,8,18); }
-    else if(mood==='hunt'){ move=3.0*dt; e.goal={x:player.x,z:player.z}; }
-    else { // lurk / stalk / ambush: angel behaviour — only advance when unseen
-      const dark=(!torchOn||blackoutT>0)?1.5:1;
-      if(seen){ e.seenT+=dt; move=0; if((mood==='lurk')&&e.seenT>2.2){ const o=randomOpenNear(player.x,player.z,16,24); e.g.position.set(o.x,0,o.z); e.seenT=0; } }
-      else { e.seenT=0; const base=mood==='stalk'?1.6:2.0; move=base*dark*st.nerve*dt; e.goal={x:player.x,z:player.z};
-        e.teleT-=dt; if((mood==='ambush'||mood==='stalk')&&e.teleT<=0&&d>10){ const a=player.yaw+Math.PI+(Math.random()-0.5)*1.2,r=6+Math.random()*4,o={x:player.x+Math.cos(a)*r,z:player.z+Math.sin(a)*r}; if(!blocked(o.x,o.z,0.4)){ e.g.position.set(o.x,0,o.z); whoosh(); } e.teleT=7+Math.random()*6; } }
+  const e=entities[0]; if(!e) return 999;
+  const ex=e.g.position.x,ez=e.g.position.z,d=Math.hypot(ex-player.x,ez-player.z);
+  const sight=los(ex,ez,player.x,player.z);
+  const seenByPlayer=sight&&lookingAt(ex,ez,0.5)&&d<34;   // you have eyes on it
+  const canSeePlayer=sight&&d<26;                          // it can see you
+  const hears=d<playerNoise;                               // it hears your noise
+  const dark=(!torchOn||blackoutT>0)?1.5:1;
+
+  // twitching idle + limb sway (flailing while hunting)
+  e.phase+=dt*(e.mode==='hunt'?13:4); e.head.rotation.z=Math.sin(e.phase)*0.11; e.torso.rotation.x=(e.mode==='hunt'?0.22:0)+Math.sin(e.phase*0.5)*0.03;
+  const sw=e.mode==='hunt'?0.95:0.16; e.arms[0].rotation.x=Math.sin(e.phase)*sw; e.arms[1].rotation.x=-Math.sin(e.phase)*sw;
+
+  if(calmT>0 && e.mode==='hunt'){ e.mode='stalk'; e.path=null; setHowl(false); }
+
+  // ---- transitions: detection by sight/sound triggers the hunt ----
+  if(e.mode!=='hunt' && calmT<=0 && ((canSeePlayer&&!seenByPlayer)||hears||(d<3&&!seenByPlayer))) startHunt(e);
+
+  if(e.mode==='hunt'){
+    if(canSeePlayer||hears){ e.lostT=0; e.last={x:player.x,z:player.z}; } else e.lostT+=dt;
+    setHowl(true);
+    moveEntity(e,e.last.x,e.last.z,(4.6+(level?level.danger*0.22:0))*(canSeePlayer?1:0.85),dt);
+    if(e.lostT>4){ e.mode='search'; e.path=null; }
+  } else if(e.mode==='search'){
+    setHowl(false); moveEntity(e,e.last.x,e.last.z,2.6,dt);
+    if(Math.hypot(ex-e.last.x,ez-e.last.z)<1.6){ e.mode='stalk'; e.path=null; }
+    if(canSeePlayer&&!seenByPlayer) startHunt(e);
+  } else { // STALK: it only creeps when you are not looking at it (the angel)
+    setHowl(false);
+    if(seenByPlayer){ e.teleT-=dt*0.25; /* frozen, watching */ }
+    else {
+      moveEntity(e,player.x,player.z,(2.0+(level?level.danger*0.15:0))*dark*st.nerve,dt);
+      e.teleT-=dt;
+      if(e.teleT<=0 && d>11){ // vanish to a spot you can't see (behind you / a doorway)
+        for(let t=0;t<16;t++){ const a=player.yaw+Math.PI+(Math.random()-0.5)*1.7,r=6+Math.random()*6,o={x:player.x+Math.cos(a)*r,z:player.z+Math.sin(a)*r};
+          if(!blocked(o.x,o.z,0.4)&&!los(o.x,o.z,player.x,player.z)){ e.g.position.set(o.x,0,o.z); whoosh(); break; } }
+        e.teleT=8+Math.random()*7; e.path=null;
+      }
     }
-    const goal=e.goal||{x:ex,z:ez}; const gx=goal.x-ex,gz=goal.z-ez,gd=Math.hypot(gx,gz)||1;
-    if(move>0){ const nx=ex+gx/gd*move,nz=ez+gz/gd*move; if(!blocked(nx,ez,0.4)) e.g.position.x=nx; if(!blocked(e.g.position.x,nz,0.4)) e.g.position.z=nz; }
-    e.g.lookAt(player.x,1.4,player.z); e.eyes.color.setRGB(1,1,1);
-    const nd=Math.hypot(e.g.position.x-player.x,e.g.position.z-player.z);
-    if(nd<nearest){ nearest=nd; nearestSeen=seen; nearestUnseen=!seen; const rx=e.g.position.x-player.x,rz=e.g.position.z-player.z; nearestSide=(rx*Math.cos(player.yaw)-rz*Math.sin(player.yaw))>0?1:-1; }
-    if(nd<1.25 && mood!=='calm'){ caught(); return nearest; }
   }
-  return nearest;
+
+  e.g.lookAt(player.x,1.6,player.z);
+  const nd=Math.hypot(e.g.position.x-player.x,e.g.position.z-player.z);
+  nearestSeen=seenByPlayer; nearestUnseen=!seenByPlayer; const rx=e.g.position.x-player.x,rz=e.g.position.z-player.z; nearestSide=(rx*Math.cos(player.yaw)-rz*Math.sin(player.yaw))>0?1:-1;
+  mood=e.mode;
+  if(nd<1.3 && calmT<=0){ caught(); return nd; }
+  return nd;
 }
 
 function caught(){
   if(dead) return;
-  if(wardCharges>0){ wardCharges--; whoosh(); flashScreen(); const o=randomOpenNear(player.x,player.z,12,18); player.x=o.x; player.z=o.z; mood='calm'; calmT=6; showToast('the almond ward shatters'); return; }
-  dead=true; playing=false; if(document.pointerLockElement) document.exitPointerLock();
+  if(wardCharges>0){ wardCharges--; screech(); flashScreen(); const o=randomOpenNear(player.x,player.z,14,20); player.x=o.x; player.z=o.z; calmT=7; if(entities[0]){ entities[0].mode='stalk'; entities[0].path=null; } setHowl(false); showToast('the almond ward shatters'); return; }
+  dead=true; playing=false; setHowl(false); if(document.pointerLockElement) document.exitPointerLock();
   jumpscare(async ()=>{ document.getElementById('keptNum').textContent=save.bank;
     const msg=await aiText('the entity has just caught and killed the player; write the final words it leaves them',cannedDeaths);
     document.getElementById('overMsg').innerHTML=fillName(msg); show(overScreen); });
@@ -544,7 +603,7 @@ document.getElementById('controlsNote').innerHTML=isTouch?'Left thumb = walk · 
 const sensRange=document.getElementById('sensRange'),sensVal=document.getElementById('sensVal'); sensRange.value=save.sens; sensVal.textContent=(+save.sens).toFixed(1);
 sensRange.addEventListener('input',()=>{ save.sens=+sensRange.value; sensVal.textContent=save.sens.toFixed(1); persist(); });
 document.getElementById('playBtn').onclick=()=>{ const nm=document.getElementById('playerName').value.trim(); playerName=nm||'you'; const k=document.getElementById('aiKey').value.trim(); AI_KEY=k||null; hide(startScreen); startAudio(); startRun(); updateHUD(); if(!isTouch) canvas.requestPointerLock(); };
-function togglePause(){ paused=!paused; if(paused){ renderUpgrades(); show(pauseScreen); if(document.pointerLockElement) document.exitPointerLock(); } else hide(pauseScreen); }
+function togglePause(){ paused=!paused; if(paused){ setHowl(false); renderUpgrades(); show(pauseScreen); if(document.pointerLockElement) document.exitPointerLock(); } else hide(pauseScreen); }
 document.getElementById('resumeBtn').onclick=()=>{ togglePause(); if(!isTouch) canvas.requestPointerLock(); };
 document.getElementById('restartBtn').onclick=()=>{ hide(pauseScreen); startRun(); updateHUD(); if(!isTouch) canvas.requestPointerLock(); };
 document.getElementById('reviveBtn').onclick=()=>{ hide(overScreen); startRun(); updateHUD(); if(!isTouch) canvas.requestPointerLock(); };
