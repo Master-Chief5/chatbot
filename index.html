@@ -96,10 +96,11 @@
   <p class="sub">You no-clipped out of reality. Something noticed. It is patient, and it does not like to be watched —
      which is the only reason you are still alive. Keep it in sight. Find the way down. Do not run out of places to look.</p>
   <div class="field"><label>YOUR NAME — it will learn it</label><input id="playerName" type="text" maxlength="20" placeholder="(optional)" autocomplete="off" /></div>
-  <div class="field"><label>🔑 OpenAI API key — powers the live AI</label>
-    <input id="aiKey" type="password" placeholder="sk-...  (optional — blank = offline AI)" autocomplete="off" />
-    <div class="tiny">With a key, the AI directs the entity's behavior, writes whispers that react to how you play (and your name),
-       names each level, sets your objectives, and writes your death. Stays in your browser; sent only to OpenAI.</div>
+  <div class="field"><label>🔑 OpenAI or Google Gemini API key — powers the live AI</label>
+    <input id="aiKey" type="password" placeholder="sk-... or AIza...  (optional — blank = offline AI)" autocomplete="off" />
+    <div class="tiny">Auto-detects the provider (Gemini keys start with <b>AIza</b>, OpenAI with <b>sk-</b>). The AI directs the entity,
+       writes whispers that react to how you play (and your name), names levels, sets objectives, and writes your death.
+       Stays in your browser; sent only to your chosen provider. The corner tag confirms if it connected.</div>
   </div>
   <button class="btn" id="playBtn">ENTER</button>
   <div style="margin-top:12px;font-size:12px;opacity:.65;max-width:560px;line-height:1.7" id="controlsNote"></div>
@@ -406,8 +407,17 @@ function screech(){ if(!actx) return; const t=actx.currentTime; // the moment it
   [180,190,360,540,720].forEach(f=>{ const o=actx.createOscillator(); o.type='sawtooth'; o.frequency.setValueAtTime(f*0.6,t); o.frequency.exponentialRampToValueAtTime(f*1.5,t+0.5); const g=actx.createGain(); g.gain.setValueAtTime(0.0,t); g.gain.linearRampToValueAtTime(0.16,t+0.03); g.gain.exponentialRampToValueAtTime(0.001,t+0.7); o.connect(g); g.connect(master); o.start(t); o.stop(t+0.75); });
   const src=actx.createBufferSource(); src.buffer=noiseBuf(0.7); const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=1200; bp.Q.value=1.2; const ng=actx.createGain(); ng.gain.setValueAtTime(0.4,t); ng.gain.exponentialRampToValueAtTime(0.001,t+0.7); src.connect(bp); bp.connect(ng); ng.connect(master); src.start(t); }
 
-// ===================== AI =====================
-let AI_KEY=null, playerName='you';
+// ===================== AI (OpenAI or Google Gemini) =====================
+// Gemini exposes an OpenAI-compatible endpoint, so we keep one request shape and
+// just swap the base URL + model based on the key. Provider auto-detected:
+//   "AIza..."  -> Google Gemini      "sk-..." (or anything else) -> OpenAI
+let AI_KEY=null, AI_PROVIDER='none', AI_BASE='', AI_MODEL='', playerName='you';
+function configureAI(key){ AI_KEY=key||null;
+  if(!AI_KEY){ AI_PROVIDER='none'; return; }
+  if(/^AIza/.test(AI_KEY)){ AI_PROVIDER='gemini'; AI_BASE='https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'; AI_MODEL='gemini-2.0-flash'; }
+  else { AI_PROVIDER='openai'; AI_BASE='https://api.openai.com/v1/chat/completions'; AI_MODEL='gpt-4o-mini'; }
+}
+function parseJSONLoose(t){ if(!t) return null; try{ return JSON.parse(t); }catch(e){} const m=t.match(/\{[\s\S]*\}/); if(m){ try{ return JSON.parse(m[0]); }catch(e){} } return null; }
 const cannedWhispers=['it sees you now','do not turn around','you were never meant to leave','closer','your room is gone','it wears your footsteps','no exit, only deeper','we are glad you came','smile','keep looking, [n]','behind you, [n]','you blinked'];
 const cannedNotes=['IF YOU READ THIS RUN','day 47 the walls moved again','dont look away from it','dont trust the exits','i can hear it humming','there is no level 1','help me','it copies your face','i stopped counting doors'];
 const cannedDeaths=['it was always going to be you, [n].','you should have kept watching.','the hum has your voice now.','[n] stopped, at last.','it had been so patient.'];
@@ -422,21 +432,20 @@ const offLevels=[
 function fillName(s){ return (s||'').replace(/\[n\]/gi,playerName); }
 // Verify the key actually works (failures otherwise fall back silently). Tells
 // you the truth in the corner tag, and disables a dead key so it stops retrying.
+async function aiCall(body){ return fetch(AI_BASE,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+AI_KEY},body:JSON.stringify({model:AI_MODEL,...body})}); }
 async function aiSelfTest(){ const tag=document.getElementById('aiTag');
   if(!AI_KEY){ tag.textContent='AI: OFFLINE (no key)'; return; }
-  tag.textContent='AI: checking…';
-  try{ const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+AI_KEY},
-      body:JSON.stringify({model:'gpt-4o-mini',max_tokens:1,messages:[{role:'user',content:'ping'}]})});
-    if(r.ok){ tag.textContent='AI: ONLINE ✓'; }
-    else { let why=r.status===401?'bad key':r.status===429?'no credit/rate':('error '+r.status); tag.textContent='AI: FAILED — '+why+' (offline)'; AI_KEY=null; console.warn('AI key test failed', r.status, await r.text().catch(()=>'')); }
+  tag.textContent='AI: checking '+AI_PROVIDER+'…';
+  try{ const r=await aiCall({max_tokens:1,messages:[{role:'user',content:'ping'}]});
+    if(r.ok){ tag.textContent='AI: ONLINE ✓ ('+AI_PROVIDER+')'; }
+    else { let why=r.status===401||r.status===403?'bad key':r.status===429?'no credit/rate':('error '+r.status); tag.textContent='AI: FAILED — '+why+' (offline)'; AI_KEY=null; console.warn('AI key test failed', r.status, await r.text().catch(()=>'')); }
   }catch(e){ tag.textContent='AI: BLOCKED — network/CORS (offline)'; AI_KEY=null; console.warn('AI fetch error', e); } }
 async function aiJSON(sys,user,fb){ if(!AI_KEY) return fb();
-  try{ const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+AI_KEY},
-      body:JSON.stringify({model:'gpt-4o-mini',temperature:1,max_tokens:220,response_format:{type:'json_object'},messages:[{role:'system',content:sys},{role:'user',content:user}]})});
-    const j=await r.json(); const t=j.choices?.[0]?.message?.content; return (t?JSON.parse(t):null)||fb(); }catch(e){ return fb(); } }
+  try{ const body={temperature:1,max_tokens:240,messages:[{role:'system',content:sys},{role:'user',content:user}]};
+    if(AI_PROVIDER==='openai') body.response_format={type:'json_object'};      // Gemini compat: ask via prompt + parse loosely
+    const r=await aiCall(body); const j=await r.json(); return parseJSONLoose(j.choices?.[0]?.message?.content)||fb(); }catch(e){ return fb(); } }
 async function aiText(context,fb){ if(!AI_KEY) return fillName(fb[(Math.random()*fb.length)|0]);
-  try{ const r=await fetch('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+AI_KEY},
-      body:JSON.stringify({model:'gpt-4o-mini',temperature:1.2,max_tokens:30,messages:[{role:'system',content:`You write SHORT, deeply unsettling Backrooms horror fragments meant to frighten an adult: 3-13 words, lowercase, no quotes. The player's name is "${playerName}"; use it sometimes for dread. Output only the fragment.`},{role:'user',content:context}]})});
+  try{ const r=await aiCall({temperature:1.2,max_tokens:30,messages:[{role:'system',content:`You write SHORT, deeply unsettling Backrooms horror fragments meant to frighten an adult: 3-13 words, lowercase, no quotes. The player's name is "${playerName}"; use it sometimes for dread. Output only the fragment.`},{role:'user',content:context}]});
     const j=await r.json(); const t=j.choices?.[0]?.message?.content?.trim(); return t?t.replace(/^["']|["']$/g,''):fillName(fb[(Math.random()*fb.length)|0]); }catch(e){ return fillName(fb[(Math.random()*fb.length)|0]); } }
 function safeColor(hex,fb){ try{ return new THREE.Color(hex); }catch(e){ return new THREE.Color(fb); } }
 
@@ -655,7 +664,7 @@ function startRun(){
   objective=null; nextObjT=0; curZone=null; level=null; blackoutT=0; calmT=0; dirT=8; behave.still=behave.run=behave.dark=behave.back=0; prevYaw=0;
   psychReset();
   ensureZone(player.x,player.z);
-  document.getElementById('aiTag').textContent=AI_KEY?'AI: ONLINE':'AI: OFFLINE';
+  document.getElementById('aiTag').textContent=AI_KEY?('AI: '+AI_PROVIDER.toUpperCase()):'AI: OFFLINE';
 }
 
 const keys={};
@@ -848,7 +857,7 @@ volRange.value=save.vol; volVal.textContent=Math.round(save.vol*100); fovRange.v
 volRange.addEventListener('input',()=>{ save.vol=+volRange.value; volVal.textContent=Math.round(save.vol*100); if(master) master.gain.value=save.vol; persist(); });
 fovRange.addEventListener('input',()=>{ save.fov=+fovRange.value; fovVal.textContent=save.fov; camera.fov=save.fov; camera.updateProjectionMatrix(); persist(); });
 qualSel.addEventListener('change',()=>{ save.quality=qualSel.value; applyQuality(); persist(); });
-document.getElementById('playBtn').onclick=()=>{ const nm=document.getElementById('playerName').value.trim(); playerName=nm||'you'; const k=document.getElementById('aiKey').value.trim(); AI_KEY=k||null; hide(startScreen); startAudio(); applySettings(); startRun(); aiSelfTest(); updateHUD(); if(!isTouch) canvas.requestPointerLock(); };
+document.getElementById('playBtn').onclick=()=>{ const nm=document.getElementById('playerName').value.trim(); playerName=nm||'you'; const k=document.getElementById('aiKey').value.trim(); configureAI(k); hide(startScreen); startAudio(); applySettings(); startRun(); aiSelfTest(); updateHUD(); if(!isTouch) canvas.requestPointerLock(); };
 function renderObjLog(){ const el=document.getElementById('objLog'); const ph=save.story.phase, done=save.story.objectivesDone||0;
   const phases=['','survive & explore','strange signals','locate the anomalies','the escape protocol','the way out'];
   el.innerHTML=`◈ PHASE ${ph}/5 — ${phases[ph]||''}<br>signals recovered: ${done}${save.story.won?'  ·  you escaped once':''}${save.psych&&save.psych.motif?'<br><span style="opacity:.6">recurring: "'+save.psych.motif+'"</span>':''}`; }
