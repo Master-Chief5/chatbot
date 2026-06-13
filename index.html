@@ -178,7 +178,7 @@ function chunkData(cx,cz){
   for(let lx=2;lx<CHUNK;lx+=3) for(let lz=2;lz<CHUNK;lz+=3){ const k=lx+','+lz; if(rng()<0.7&&!walls.has(k)) pillars.add(k); }
   const nProp=1+(rng()*4|0);
   for(let i=0;i<nProp;i++){ const lx=1+(rng()*(CHUNK-1)|0),lz=1+(rng()*(CHUNK-1)|0),k=lx+','+lz; if(walls.has(k)||pillars.has(k)) continue;
-    const r=rng(); let type; if(r<0.20)type='box'; else if(r<0.37)type='wet'; else if(r<0.57)type='note'; else if(r<0.69)type='cone'; else if(r<0.80)type='chair'; else if(r<0.90)type='pipe'; else type='papers';
+    const r=rng(); let type; if(r<0.15)type='box'; else if(r<0.28)type='wet'; else if(r<0.44)type='note'; else if(r<0.53)type='cone'; else if(r<0.61)type='chair'; else if(r<0.69)type='pipe'; else if(r<0.75)type='papers'; else if(r<0.83)type='sign'; else if(r<0.90)type='panel'; else if(r<0.97)type='vent'; else type='frame';
     props.push({lx,lz,type,rot:rng()*6.28,scale:0.7+rng()*0.7,v:rng(),id:key+':p'+i}); }
   const nPick=rng()<0.85?(1+(rng()*2|0)):0;
   for(let i=0;i<nPick;i++){ const lx=1+(rng()*(CHUNK-1)|0),lz=1+(rng()*(CHUNK-1)|0),k=lx+','+lz; if(walls.has(k)||pillars.has(k)) continue; pickups.push({lx,lz,id:key+':a'+i}); }
@@ -200,10 +200,11 @@ function randomOpenNear(x,z,minR,maxR){ for(let t=0;t<40;t++){ const a=Math.rand
 // ===================== TEXTURES =====================
 function tex(draw,rep=1,size=256){ const c=document.createElement('canvas'); c.width=c.height=size; draw(c.getContext('2d'),size); const t=new THREE.CanvasTexture(c); t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(rep,rep); t.anisotropy=8; return t; }
 const wallTex=tex((g,s)=>{ g.fillStyle='#b9a43f'; g.fillRect(0,0,s,s);
-  for(let x=0;x<s;x+=14){ g.fillStyle='rgba(120,100,30,0.18)'; g.fillRect(x,0,1,s); g.fillStyle='rgba(255,245,200,0.06)'; g.fillRect(x+2,0,1,s); }
-  for(let k=0;k<3000;k++){ g.fillStyle=`rgba(0,0,0,${Math.random()*0.06})`; g.fillRect(Math.random()*s,Math.random()*s,1,1); }
-  for(let k=0;k<6;k++){ g.fillStyle=`rgba(70,50,15,${0.06+Math.random()*0.10})`; const w=20+Math.random()*70; g.fillRect(Math.random()*s,Math.random()*s,w,w*0.7); }
-  g.fillStyle='rgba(0,0,0,0.18)'; g.fillRect(0,s-8,s,8); });
+  for(let x=0;x<s;x+=18){ g.fillStyle='rgba(110,92,28,0.20)'; g.fillRect(x,0,1,s); g.fillStyle='rgba(255,246,200,0.05)'; g.fillRect(x+2,0,1,s); }   // wallpaper seams
+  for(let k=0;k<2600;k++){ g.fillStyle=`rgba(0,0,0,${Math.random()*0.05})`; g.fillRect(Math.random()*s,Math.random()*s,1,1); }
+  for(let k=0;k<4;k++){ const x=Math.random()*s,w=14+Math.random()*40; const gr=g.createLinearGradient(0,0,0,s*0.6); gr.addColorStop(0,'rgba(58,44,14,0.30)'); gr.addColorStop(1,'rgba(58,44,14,0)'); g.fillStyle=gr; g.fillRect(x,0,w,s*0.6); }  // water-stain drips
+  g.fillStyle='rgba(70,54,18,0.5)'; g.fillRect(0,Math.floor(s*0.34),s,4); g.fillStyle='rgba(255,246,200,0.06)'; g.fillRect(0,Math.floor(s*0.34)+4,s,2);   // chair-rail trim
+  g.fillStyle='#3a3216'; g.fillRect(0,s-26,s,26); g.fillStyle='rgba(0,0,0,0.32)'; g.fillRect(0,s-26,s,3); });                                          // baseboard
 const carpetTex=tex((g,s)=>{ g.fillStyle='#5f5520'; g.fillRect(0,0,s,s);
   for(let k=0;k<14000;k++){ const d=Math.random(); g.fillStyle=`rgba(${d<0.5?16:230},${d<0.5?14:210},${d<0.5?4:150},0.10)`; g.fillRect(Math.random()*s,Math.random()*s,1,1); }
   for(let k=0;k<4;k++){ g.fillStyle='rgba(14,11,3,0.14)'; const r=30+Math.random()*70; g.beginPath(); g.arc(Math.random()*s,Math.random()*s,r,0,6.28); g.fill(); } },8);
@@ -232,10 +233,27 @@ scene.add(new THREE.AmbientLight(0x4a4018,0.22));
 const torch=new THREE.SpotLight(0xfff2c0,0,34,Math.PI/5,0.5,1.3); camera.add(torch); torch.target.position.set(0,0,-1); camera.add(torch.target); scene.add(camera);
 torch.shadow.mapSize.set(1024,1024); torch.shadow.camera.near=0.4; torch.shadow.camera.far=34; torch.shadow.bias=-0.0006;
 let torchOn=true;
-const flick=[new THREE.PointLight(0xfff3c0,0,16,1.6),new THREE.PointLight(0xfff3c0,0,16,1.6),new THREE.PointLight(0xfff3c0,0,16,1.6)]; flick.forEach(l=>scene.add(l));
+// ---- player embodiment: a held flashlight + forearm that sways as you move ----
+const viewmodel=new THREE.Group(); camera.add(viewmodel);
+const vmSleeve=new THREE.Mesh(new THREE.CapsuleGeometry(0.075,0.42,4,8),new THREE.MeshStandardMaterial({color:0x2c2c32,roughness:1})); vmSleeve.position.set(0.26,-0.46,-0.5); vmSleeve.rotation.set(1.0,0,-0.25); viewmodel.add(vmSleeve);
+const vmBody=new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.05,0.32,12),new THREE.MeshStandardMaterial({color:0x18181b,roughness:0.45,metalness:0.6})); vmBody.position.set(0.28,-0.28,-0.62); vmBody.rotation.set(Math.PI/2-0.12,0,0); viewmodel.add(vmBody);
+const vmLens=new THREE.Mesh(new THREE.CircleGeometry(0.045,14),new THREE.MeshBasicMaterial({color:0xfff2c0,side:THREE.DoubleSide})); vmLens.position.set(0.28,-0.235,-0.785); vmLens.rotation.x=-0.12; viewmodel.add(vmLens);
+viewmodel.traverse(o=>{ o.castShadow=false; o.receiveShadow=false; o.frustumCulled=false; });
+function updateViewmodel(moving,run){ const t=performance.now()*0.001, amt=moving?(run?0.03:0.018):0.004, f=run?11:6;
+  const sx=Math.sin(t*f)*amt, sy=Math.abs(Math.cos(t*f))*amt*0.8; let jx=0,jy=0; if(mood==='hunt'){ jx=(Math.random()-0.5)*0.02; jy=(Math.random()-0.5)*0.02; }
+  viewmodel.position.set(sx+jx,(crouching?-0.11:0)-sy+jy,0); viewmodel.rotation.z=sx*0.4; viewmodel.rotation.x=(crouching?0.12:0)-sy*0.3;
+  vmLens.material.color.setScalar(torch.intensity>0.2?1:0.14); }
+// pooled flashlight-ish fill lights that snap to the nearest live ceiling fixtures and flicker
+const flick=[]; for(let i=0;i<5;i++){ const l=new THREE.PointLight(0xfff3c0,0,15,1.7); scene.add(l); flick.push(l); }
 const wallMat=new THREE.MeshStandardMaterial({map:wallTex,roughness:0.95});
 const floorMat=new THREE.MeshStandardMaterial({map:carpetTex,roughness:1});
-const ceilMat=new THREE.MeshStandardMaterial({map:ceilTex,emissiveMap:ceilEmis,emissive:0xfff2c0,emissiveIntensity:0.85,roughness:1});
+const ceilMat=new THREE.MeshStandardMaterial({map:ceilTex,emissiveMap:ceilEmis,emissive:0xfff2c0,emissiveIntensity:0.32,roughness:1});  // dim baseline; real light comes from fixtures
+// ceiling light fixtures: a grid of panels, ~26% of them dead/dark, so the space has light-and-shadow rhythm
+const FIX_SEED=20260613;
+function fixtureLive(gi,gj){ return (hash3(gi,gj,FIX_SEED)%100) < 74; }
+const fixGeo=new THREE.BoxGeometry(1.7,0.1,1.7);
+const fixLiveMat=new THREE.MeshStandardMaterial({color:0xfff7d8,emissive:0xfff3c8,emissiveIntensity:2.4,roughness:1});
+const fixDeadMat=new THREE.MeshStandardMaterial({color:0x14130c,emissive:0x000000,roughness:1});
 const wallGeo=new THREE.BoxGeometry(CELL,WALL_H,CELL),pillGeo=new THREE.BoxGeometry(PILLAR_HALF*2,WALL_H,PILLAR_HALF*2),planeGeo=new THREE.PlaneGeometry(CHUNK*CELL,CHUNK*CELL);
 // --- prop art ---
 const cardTex=tex((g,s)=>{ g.fillStyle='#7a5a30'; g.fillRect(0,0,s,s);
@@ -251,6 +269,17 @@ const coneBaseGeo=new THREE.BoxGeometry(0.5,0.05,0.5);
 const pipeGeo=new THREE.CylinderGeometry(0.07,0.07,CELL*0.96,8),pipeMat=new THREE.MeshStandardMaterial({color:0x5a5a52,roughness:0.5,metalness:0.6});
 const plasticMat=new THREE.MeshStandardMaterial({color:0x26262a,roughness:0.7}),legMat=new THREE.MeshStandardMaterial({color:0x44444a,roughness:0.5,metalness:0.5});
 const paperGeo=new THREE.PlaneGeometry(0.32,0.4),paperMat=new THREE.MeshStandardMaterial({color:0xddd6bc,roughness:1,side:THREE.DoubleSide});
+// wall-mounted architecture details
+const signTex=tex((g,s)=>{ g.fillStyle='#0a2a12'; g.fillRect(0,0,s,s); g.fillStyle='#48e06a'; g.font='bold '+Math.floor(s*0.46)+'px monospace'; g.textAlign='center'; g.textBaseline='middle'; g.fillText('EXIT',s/2,s/2); },1,128);
+const signGeo=new THREE.PlaneGeometry(0.66,0.28),signMat=new THREE.MeshBasicMaterial({map:signTex});   // emissive-ish, blooms
+const ventTex=tex((g,s)=>{ g.fillStyle='#3a3a36'; g.fillRect(0,0,s,s); for(let y=8;y<s-6;y+=16){ g.fillStyle='rgba(0,0,0,0.55)'; g.fillRect(6,y,s-12,7); g.fillStyle='rgba(255,255,255,0.06)'; g.fillRect(6,y+7,s-12,2); } g.strokeStyle='#26261f'; g.lineWidth=8; g.strokeRect(4,4,s-8,s-8); },1,128);
+const ventGeo=new THREE.PlaneGeometry(0.7,0.5),ventMat=new THREE.MeshStandardMaterial({map:ventTex,roughness:0.8,metalness:0.3,side:THREE.DoubleSide});
+const panelGeo=new THREE.BoxGeometry(0.42,0.56,0.08),panelMat=new THREE.MeshStandardMaterial({color:0x4a4a44,roughness:0.5,metalness:0.6});
+const panelKnobGeo=new THREE.CylinderGeometry(0.03,0.03,0.05,8),panelKnobMat=new THREE.MeshStandardMaterial({color:0x222018,roughness:0.4,metalness:0.7});
+const frameBeamGeo=new THREE.BoxGeometry(0.18,2.6,0.3),frameTopGeo=new THREE.BoxGeometry(1.5,0.22,0.3),frameMat=new THREE.MeshStandardMaterial({color:0x2a2418,roughness:0.85});
+function makeDoorframe(){ const grp=new THREE.Group(); for(const sx of [-0.66,0.66]){ const b=new THREE.Mesh(frameBeamGeo,frameMat); b.position.set(sx,1.3,0); grp.add(b);} const top=new THREE.Mesh(frameTopGeo,frameMat); top.position.set(0,2.5,0); grp.add(top); return grp; }
+// mount a flat detail on the nearest wall face; returns false if no wall adjacent
+function mountWall(mesh,gi,gj,wx,wz,h){ for(const [di,dj] of [[1,0],[-1,0],[0,1],[0,-1]]){ if(cellSolid(gi+di,gj+dj)||cellPillar(gi+di,gj+dj)){ mesh.position.set(wx+di*(CELL/2-0.04),h,wz+dj*(CELL/2-0.04)); mesh.rotation.y=Math.atan2(-di,-dj); return true; } } return false; }
 const almondMat=new THREE.MeshStandardMaterial({color:0xf2efe0,emissive:0x6fd1ff,emissiveIntensity:0.7,roughness:0.4}),almondGeo=new THREE.CylinderGeometry(0.18,0.18,0.5,10);
 const chairSeatGeo=new THREE.BoxGeometry(0.5,0.06,0.5),chairBackGeo=new THREE.BoxGeometry(0.5,0.5,0.06),chairLegGeo=new THREE.CylinderGeometry(0.025,0.025,0.5,6);
 function makeChair(){ const grp=new THREE.Group(); const seat=new THREE.Mesh(chairSeatGeo,plasticMat); seat.position.y=0.5; grp.add(seat);
@@ -301,6 +330,15 @@ function applyQuality(){
 }
 function renderFrame(){ if(postReady&&save.quality!=='low'&&composer){ if(gradePass) gradePass.uniforms.t.value=performance.now()*0.001; composer.render(); } else renderer.render(scene,camera); }
 initPost();
+// snap the pooled lights to the nearest LIVE ceiling fixtures and flicker them
+function updateLights(){
+  if(typeof player==='undefined'||!player){ return; }
+  if(blackoutT>0){ for(const l of flick) l.intensity=0; return; }
+  const pci=Math.floor(player.x/CELL), pcj=Math.floor(player.z/CELL), cands=[];
+  for(let gi=pci-6; gi<=pci+6; gi++){ if(gi&1) continue; for(let gj=pcj-6; gj<=pcj+6; gj++){ if(gj&1) continue; if(!fixtureLive(gi,gj)) continue; const fx=(gi+0.5)*CELL, fz=(gj+0.5)*CELL; cands.push([(fx-player.x)**2+(fz-player.z)**2,fx,fz]); } }
+  cands.sort((a,b)=>a[0]-b[0]);
+  flick.forEach((l,i)=>{ const c=cands[i]; if(!c){ l.intensity=0; return; } l.position.set(c[1],WALL_H-0.35,c[2]); const fl=Math.random()<0.05?0.12:(0.85+Math.random()*0.3); l.intensity=0.9*fl; });
+}
 
 // ===================== CHUNK STREAMING =====================
 const chunks=new Map(); let activePickups=[],activeNotes=[]; const collected=new Set(),readNotes=new Map();
@@ -309,6 +347,10 @@ function buildChunk(cx,cz){
   const d=chunkData(cx,cz),g=new THREE.Group(),ox=cx*CHUNK*CELL,oz=cz*CHUNK*CELL;
   const f=new THREE.Mesh(planeGeo,floorMat); f.rotation.x=-Math.PI/2; f.position.set(ox+CHUNK*CELL/2,0,oz+CHUNK*CELL/2); f.receiveShadow=true; g.add(f);
   const c=new THREE.Mesh(planeGeo,ceilMat); c.rotation.x=Math.PI/2; c.position.set(ox+CHUNK*CELL/2,WALL_H,oz+CHUNK*CELL/2); g.add(c);
+  // ceiling light fixtures on a 2-cell grid (live = bright panel, dead = dark)
+  { const live=[],dead=[]; for(let li=0;li<CHUNK;li+=2) for(let lj=0;lj<CHUNK;lj+=2){ const gi=cx*CHUNK+li,gj=cz*CHUNK+lj; (fixtureLive(gi,gj)?live:dead).push([ox+(li+0.5)*CELL,oz+(lj+0.5)*CELL]); }
+    const mk=(arr,mat)=>{ if(!arr.length) return; const im=new THREE.InstancedMesh(fixGeo,mat,arr.length),m=new THREE.Matrix4(); arr.forEach((p,i)=>{ m.makeTranslation(p[0],WALL_H-0.06,p[1]); im.setMatrixAt(i,m); }); im.instanceMatrix.needsUpdate=true; g.add(im); };
+    mk(live,fixLiveMat); mk(dead,fixDeadMat); }
   if(d.walls.size){ const im=new THREE.InstancedMesh(wallGeo,wallMat,d.walls.size),m=new THREE.Matrix4(); let n=0; d.walls.forEach(k=>{ const [lx,lz]=k.split(',').map(Number); m.makeTranslation(ox+(lx+0.5)*CELL,WALL_H/2,oz+(lz+0.5)*CELL); im.setMatrixAt(n++,m); }); im.instanceMatrix.needsUpdate=true; im.castShadow=true; im.receiveShadow=true; g.add(im); }
   // pillars, including Environment Intelligence overrides (added / removed columns)
   const pset=new Set(); d.pillars.forEach(k=>{ const [lx,lz]=k.split(',').map(Number); if(!delPillars.has((cx*CHUNK+lx)+','+(cz*CHUNK+lz))) pset.add(lx+','+lz); });
@@ -324,11 +366,12 @@ function buildChunk(cx,cz){
     else if(p.type==='pipe'){ const horiz=p.v<0.5; const pp=new THREE.Mesh(pipeGeo,pipeMat); pp.position.set(wx,WALL_H-0.25,wz); pp.rotation.z=Math.PI/2; if(!horiz) pp.rotation.y=Math.PI/2; pp.castShadow=true; g.add(pp); }
     else if(p.type==='chair'){ const ch=makeChair(); ch.position.set(wx,0,wz); ch.rotation.y=p.rot; ch.traverse(o=>{ if(o.isMesh) o.castShadow=true; }); g.add(ch); }
     else if(p.type==='papers'){ for(let k=0;k<3;k++){ const pa=new THREE.Mesh(paperGeo,paperMat); pa.rotation.x=-Math.PI/2; pa.rotation.z=Math.random()*6.28; pa.position.set(wx+(Math.random()-0.5)*0.8,0.015,wz+(Math.random()-0.5)*0.8); g.add(pa); } }
+    else if(p.type==='sign'){ const sg=new THREE.Mesh(signGeo,signMat); if(mountWall(sg,gi,gj,wx,wz,WALL_H-0.6)) g.add(sg); }
+    else if(p.type==='vent'){ const vt=new THREE.Mesh(ventGeo,ventMat); if(mountWall(vt,gi,gj,wx,wz,WALL_H-1.0)) g.add(vt); }
+    else if(p.type==='panel'){ const pn=new THREE.Mesh(panelGeo,panelMat); if(mountWall(pn,gi,gj,wx,wz,1.5)){ pn.castShadow=true; g.add(pn); } }
+    else if(p.type==='frame'){ const fr=makeDoorframe(); fr.position.set(wx,0,wz); fr.rotation.y=p.rot; fr.traverse(o=>{ if(o.isMesh){ o.castShadow=true; o.receiveShadow=true; } }); g.add(fr); }
     else { // NOTE — mount flat on the nearest wall, else lay it on the floor like dropped paper
-      const nm=new THREE.Mesh(noteGeo,noteMat); let mounted=false;
-      for(const [di,dj] of [[1,0],[-1,0],[0,1],[0,-1]]){ if(cellSolid(gi+di,gj+dj)||cellPillar(gi+di,gj+dj)){
-        nm.position.set(wx+di*(CELL/2-0.05),1.45+(p.v-0.5)*0.5,wz+dj*(CELL/2-0.05)); nm.rotation.y=Math.atan2(-di,-dj); mounted=true; break; } }
-      if(!mounted){ nm.rotation.x=-Math.PI/2; nm.rotation.z=p.rot; nm.position.set(wx,0.02,wz); }
+      const nm=new THREE.Mesh(noteGeo,noteMat); if(!mountWall(nm,gi,gj,wx,wz,1.45+(p.v-0.5)*0.5)){ nm.rotation.x=-Math.PI/2; nm.rotation.z=p.rot; nm.position.set(wx,0.02,wz); }
       g.add(nm); activeNotes.push({mesh:nm,id:p.id,read:readNotes.has(p.id),wx,wz}); } }
   for(const pk of d.pickups){ if(collected.has(pk.id)) continue; const wx=ox+(pk.lx+0.5)*CELL,wz=oz+(pk.lz+0.5)*CELL; const mesh=new THREE.Mesh(almondGeo,almondMat.clone()); mesh.position.set(wx,0.45,wz); g.add(mesh); activePickups.push({mesh,id:pk.id,wx,wz}); }
   scene.add(g); chunks.set(key,{group:g});
@@ -742,6 +785,7 @@ function update(dt){
   const moving=mag>0.1,bob=moving?Math.sin(performance.now()*0.012*(run?1.6:1))*(crouching?0.03:0.045):0;
   eyeH+=((crouching?1.02:EYE)-eyeH)*Math.min(1,dt*9);
   camera.position.set(player.x,eyeH+bob,player.z); camera.rotation.set(player.pitch,player.yaw,0);
+  updateViewmodel(moving,run);
   // your own footsteps — so you can hear how loud you are (and entities can too)
   if(moving&&!holdingBreath){ footT-=dt; if(footT<=0){ footT=run?0.32:(crouching?0.72:0.5); footstepSelf((run?0.1:crouching?0.03:0.06)); } }
 
@@ -768,10 +812,10 @@ function update(dt){
   const lf=Math.min(1,dt*1.2); wallMat.color.lerp(tWall,lf); floorMat.color.lerp(tFloor,lf); ceilMat.color.lerp(tCeil,lf); scene.fog.color.lerp(tFog,lf); scene.background.lerp(tFog,lf); scene.fog.density+=(tFogD-scene.fog.density)*lf;
 
   // lights
-  if(blackoutT>0) blackoutT-=dt; const emisTarget=blackoutT>0?0.02:baseEmis; ceilMat.emissiveIntensity+=(emisTarget-ceilMat.emissiveIntensity)*Math.min(1,dt*6); hemi.intensity=blackoutT>0?0.08:0.7;
+  if(blackoutT>0) blackoutT-=dt; const emisTarget=blackoutT>0?0.02:baseEmis; ceilMat.emissiveIntensity+=(emisTarget-ceilMat.emissiveIntensity)*Math.min(1,dt*6); hemi.intensity=blackoutT>0?0.06:0.55;
+  fixLiveMat.emissiveIntensity+=((blackoutT>0?0.04:2.4)-fixLiveMat.emissiveIntensity)*Math.min(1,dt*6);   // fixtures die in a blackout too
   const tt=(st.torch>0&&torchOn)?(0.85+st.torch*0.6):0; torch.intensity+=(tt-torch.intensity)*Math.min(1,dt*8);
-  flickT-=dt; if(flickT<=0){ flickT=0.3+Math.random()*2.0; flick.forEach((l,i)=>{ const a=i*2.1; l.position.set(player.x+Math.cos(a)*7,WALL_H-0.2,player.z+Math.sin(a)*7); }); }
-  const fl=blackoutT>0?0:(Math.random()<0.06?0.06:(1+Math.random()*0.25)); flick.forEach(l=>l.intensity=0.5*fl);
+  updateLights(dt);
 
   // dread visuals + heartbeat audio
   const dread=Math.max(0,Math.min(1,1-(nearest-1)/14));
