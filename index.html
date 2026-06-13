@@ -178,7 +178,8 @@ function chunkData(cx,cz){
   for(let lx=2;lx<CHUNK;lx+=3) for(let lz=2;lz<CHUNK;lz+=3){ const k=lx+','+lz; if(rng()<0.7&&!walls.has(k)) pillars.add(k); }
   const nProp=1+(rng()*4|0);
   for(let i=0;i<nProp;i++){ const lx=1+(rng()*(CHUNK-1)|0),lz=1+(rng()*(CHUNK-1)|0),k=lx+','+lz; if(walls.has(k)||pillars.has(k)) continue;
-    const r=rng(); const type=r<0.34?'box':r<0.6?'wet':r<0.82?'note':'lamp'; props.push({lx,lz,type,rot:rng()*6.28,scale:0.7+rng()*0.7,id:key+':p'+i}); }
+    const r=rng(); let type; if(r<0.20)type='box'; else if(r<0.37)type='wet'; else if(r<0.57)type='note'; else if(r<0.69)type='cone'; else if(r<0.80)type='chair'; else if(r<0.90)type='pipe'; else type='papers';
+    props.push({lx,lz,type,rot:rng()*6.28,scale:0.7+rng()*0.7,v:rng(),id:key+':p'+i}); }
   const nPick=rng()<0.85?(1+(rng()*2|0)):0;
   for(let i=0;i<nPick;i++){ const lx=1+(rng()*(CHUNK-1)|0),lz=1+(rng()*(CHUNK-1)|0),k=lx+','+lz; if(walls.has(k)||pillars.has(k)) continue; pickups.push({lx,lz,id:key+':a'+i}); }
   d={walls,pillars,props,pickups}; genCache.set(key,d); return d;
@@ -236,10 +237,25 @@ const wallMat=new THREE.MeshStandardMaterial({map:wallTex,roughness:0.95});
 const floorMat=new THREE.MeshStandardMaterial({map:carpetTex,roughness:1});
 const ceilMat=new THREE.MeshStandardMaterial({map:ceilTex,emissiveMap:ceilEmis,emissive:0xfff2c0,emissiveIntensity:0.85,roughness:1});
 const wallGeo=new THREE.BoxGeometry(CELL,WALL_H,CELL),pillGeo=new THREE.BoxGeometry(PILLAR_HALF*2,WALL_H,PILLAR_HALF*2),planeGeo=new THREE.PlaneGeometry(CHUNK*CELL,CHUNK*CELL);
-const boxGeo=new THREE.BoxGeometry(1,1,1),boxMat=new THREE.MeshStandardMaterial({color:0x6a4e26,roughness:1});
-const wetMat=new THREE.MeshBasicMaterial({color:0x100e05,transparent:true,opacity:0.6}),wetGeo=new THREE.CircleGeometry(1.1,16);
-const noteGeo=new THREE.PlaneGeometry(0.5,0.6),noteMat=new THREE.MeshBasicMaterial({map:noteTex,side:THREE.DoubleSide}),lampGeo=new THREE.BoxGeometry(0.7,0.18,0.7);
+// --- prop art ---
+const cardTex=tex((g,s)=>{ g.fillStyle='#7a5a30'; g.fillRect(0,0,s,s);
+  for(let k=0;k<2600;k++){ g.fillStyle=`rgba(0,0,0,${Math.random()*0.06})`; g.fillRect(Math.random()*s,Math.random()*s,1,1); }
+  g.strokeStyle='rgba(40,28,12,0.5)'; g.lineWidth=6; g.strokeRect(4,4,s-8,s-8);             // box seams
+  g.fillStyle='rgba(200,190,160,0.5)'; g.fillRect(s*0.5-10,0,20,s);                          // packing tape
+  g.fillStyle='rgba(30,20,8,0.4)'; g.fillRect(0,s*0.5-3,s,6); },1);
+const boxGeo=new THREE.BoxGeometry(1,1,1),boxMat=new THREE.MeshStandardMaterial({map:cardTex,roughness:0.95});
+const wetGeo=new THREE.CircleGeometry(1.0,20),wetMat=new THREE.MeshStandardMaterial({color:0x0a0a06,roughness:0.12,metalness:0.0}); // low roughness = catches the torch like a puddle
+const noteGeo=new THREE.PlaneGeometry(0.42,0.54),noteMat=new THREE.MeshBasicMaterial({map:noteTex,side:THREE.DoubleSide});
+const coneGeo=new THREE.ConeGeometry(0.26,0.62,14),coneMat=new THREE.MeshStandardMaterial({color:0xd2641e,roughness:0.6,emissive:0x431a06,emissiveIntensity:0.3});
+const coneBaseGeo=new THREE.BoxGeometry(0.5,0.05,0.5);
+const pipeGeo=new THREE.CylinderGeometry(0.07,0.07,CELL*0.96,8),pipeMat=new THREE.MeshStandardMaterial({color:0x5a5a52,roughness:0.5,metalness:0.6});
+const plasticMat=new THREE.MeshStandardMaterial({color:0x26262a,roughness:0.7}),legMat=new THREE.MeshStandardMaterial({color:0x44444a,roughness:0.5,metalness:0.5});
+const paperGeo=new THREE.PlaneGeometry(0.32,0.4),paperMat=new THREE.MeshStandardMaterial({color:0xddd6bc,roughness:1,side:THREE.DoubleSide});
 const almondMat=new THREE.MeshStandardMaterial({color:0xf2efe0,emissive:0x6fd1ff,emissiveIntensity:0.7,roughness:0.4}),almondGeo=new THREE.CylinderGeometry(0.18,0.18,0.5,10);
+const chairSeatGeo=new THREE.BoxGeometry(0.5,0.06,0.5),chairBackGeo=new THREE.BoxGeometry(0.5,0.5,0.06),chairLegGeo=new THREE.CylinderGeometry(0.025,0.025,0.5,6);
+function makeChair(){ const grp=new THREE.Group(); const seat=new THREE.Mesh(chairSeatGeo,plasticMat); seat.position.y=0.5; grp.add(seat);
+  const back=new THREE.Mesh(chairBackGeo,plasticMat); back.position.set(0,0.75,-0.22); grp.add(back);
+  for(const [sx,sz] of [[-0.2,-0.2],[0.2,-0.2],[-0.2,0.2],[0.2,0.2]]){ const leg=new THREE.Mesh(chairLegGeo,legMat); leg.position.set(sx,0.25,sz); grp.add(leg); } return grp; }
 const beacon=new THREE.Group();
 const beaconShaft=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.5,WALL_H*4,12,1,true),new THREE.MeshBasicMaterial({color:0x8fe6ff,transparent:true,opacity:0.3,side:THREE.DoubleSide}));
 beaconShaft.position.y=WALL_H*2; beacon.add(beaconShaft); const beaconLight=new THREE.PointLight(0x8fe6ff,1.2,22,1.5); beaconLight.position.y=2; beacon.add(beaconLight); beacon.visible=false; scene.add(beacon);
@@ -298,11 +314,22 @@ function buildChunk(cx,cz){
   const pset=new Set(); d.pillars.forEach(k=>{ const [lx,lz]=k.split(',').map(Number); if(!delPillars.has((cx*CHUNK+lx)+','+(cz*CHUNK+lz))) pset.add(lx+','+lz); });
   addPillars.forEach(gk=>{ const [gi,gj]=gk.split(',').map(Number); if(Math.floor(gi/CHUNK)===cx&&Math.floor(gj/CHUNK)===cz) pset.add((gi-cx*CHUNK)+','+(gj-cz*CHUNK)); });
   if(pset.size){ const im=new THREE.InstancedMesh(pillGeo,wallMat,pset.size),m=new THREE.Matrix4(); let n=0; pset.forEach(k=>{ const [lx,lz]=k.split(',').map(Number); m.makeTranslation(ox+(lx+0.5)*CELL,WALL_H/2,oz+(lz+0.5)*CELL); im.setMatrixAt(n++,m); }); im.instanceMatrix.needsUpdate=true; im.castShadow=true; im.receiveShadow=true; g.add(im); }
-  for(const p of d.props){ const wx=ox+(p.lx+0.5)*CELL,wz=oz+(p.lz+0.5)*CELL;
-    if(p.type==='box'){ const b=new THREE.Mesh(boxGeo,boxMat); b.scale.setScalar(0.6*p.scale); b.position.set(wx,0.3*p.scale,wz); b.rotation.y=p.rot; g.add(b); }
-    else if(p.type==='wet'){ const w=new THREE.Mesh(wetGeo,wetMat); w.rotation.x=-Math.PI/2; w.scale.setScalar(p.scale); w.position.set(wx,0.02,wz); g.add(w); }
-    else if(p.type==='lamp'){ const l=new THREE.Mesh(lampGeo,new THREE.MeshStandardMaterial({color:0x222018,emissive:0xfff0b0,emissiveIntensity:p.rot>3?1.4:0.1})); l.position.set(wx,WALL_H-0.12,wz); g.add(l); }
-    else { const nm=new THREE.Mesh(noteGeo,noteMat); nm.position.set(wx,1.4,wz); nm.rotation.y=p.rot; g.add(nm); activeNotes.push({mesh:nm,id:p.id,read:readNotes.has(p.id),wx,wz}); } }
+  const gi0=cx*CHUNK, gj0=cz*CHUNK;
+  for(const p of d.props){ const wx=ox+(p.lx+0.5)*CELL,wz=oz+(p.lz+0.5)*CELL, gi=gi0+p.lx, gj=gj0+p.lz;
+    if(p.type==='box'){ // a box, sometimes a leaning stack of two
+      const b=new THREE.Mesh(boxGeo,boxMat); const s=0.55+p.v*0.35; b.scale.set(s,s*(0.8+p.v*0.4),s); b.position.set(wx,b.scale.y/2,wz); b.rotation.y=p.rot; b.castShadow=true; b.receiveShadow=true; g.add(b);
+      if(p.v>0.6){ const b2=new THREE.Mesh(boxGeo,boxMat); const s2=s*0.8; b2.scale.set(s2,s2,s2); b2.position.set(wx+0.12,b.scale.y+s2/2,wz-0.1); b2.rotation.y=p.rot+0.4; b2.castShadow=true; g.add(b2); } }
+    else if(p.type==='wet'){ const w=new THREE.Mesh(wetGeo,wetMat); w.rotation.x=-Math.PI/2; w.rotation.z=p.rot; w.scale.set(p.scale*(0.8+p.v*0.6),p.scale*(0.6+p.v*0.5),1); w.position.set(wx,0.012,wz); w.receiveShadow=true; g.add(w); }
+    else if(p.type==='cone'){ const c=new THREE.Mesh(coneGeo,coneMat); c.position.set(wx,0.31,wz); c.castShadow=true; g.add(c); const base=new THREE.Mesh(coneBaseGeo,coneMat); base.position.set(wx,0.025,wz); g.add(base); }
+    else if(p.type==='pipe'){ const horiz=p.v<0.5; const pp=new THREE.Mesh(pipeGeo,pipeMat); pp.position.set(wx,WALL_H-0.25,wz); pp.rotation.z=Math.PI/2; if(!horiz) pp.rotation.y=Math.PI/2; pp.castShadow=true; g.add(pp); }
+    else if(p.type==='chair'){ const ch=makeChair(); ch.position.set(wx,0,wz); ch.rotation.y=p.rot; ch.traverse(o=>{ if(o.isMesh) o.castShadow=true; }); g.add(ch); }
+    else if(p.type==='papers'){ for(let k=0;k<3;k++){ const pa=new THREE.Mesh(paperGeo,paperMat); pa.rotation.x=-Math.PI/2; pa.rotation.z=Math.random()*6.28; pa.position.set(wx+(Math.random()-0.5)*0.8,0.015,wz+(Math.random()-0.5)*0.8); g.add(pa); } }
+    else { // NOTE — mount flat on the nearest wall, else lay it on the floor like dropped paper
+      const nm=new THREE.Mesh(noteGeo,noteMat); let mounted=false;
+      for(const [di,dj] of [[1,0],[-1,0],[0,1],[0,-1]]){ if(cellSolid(gi+di,gj+dj)||cellPillar(gi+di,gj+dj)){
+        nm.position.set(wx+di*(CELL/2-0.05),1.45+(p.v-0.5)*0.5,wz+dj*(CELL/2-0.05)); nm.rotation.y=Math.atan2(-di,-dj); mounted=true; break; } }
+      if(!mounted){ nm.rotation.x=-Math.PI/2; nm.rotation.z=p.rot; nm.position.set(wx,0.02,wz); }
+      g.add(nm); activeNotes.push({mesh:nm,id:p.id,read:readNotes.has(p.id),wx,wz}); } }
   for(const pk of d.pickups){ if(collected.has(pk.id)) continue; const wx=ox+(pk.lx+0.5)*CELL,wz=oz+(pk.lz+0.5)*CELL; const mesh=new THREE.Mesh(almondGeo,almondMat.clone()); mesh.position.set(wx,0.45,wz); g.add(mesh); activePickups.push({mesh,id:pk.id,wx,wz}); }
   scene.add(g); chunks.set(key,{group:g});
 }
@@ -583,7 +610,7 @@ function updateShadow(dt){ if(!shadow||!shadow.visible) return; shadow.userData.
 
 // --- Feature 5: THE WATCHER — leaves messages that reference you. ---
 const cannedWatcher=['still here?','you missed something','i watched you run','that wasn\'t the way','keep going [n]','i see you','you came back','why do you stop'];
-function spawnFloatingNote(wx,wz,text){ const nm=new THREE.Mesh(noteGeo,noteMat); nm.position.set(wx,1.4,wz); nm.rotation.y=Math.random()*6.28; scene.add(nm); const rec={mesh:nm,id:'f'+Math.random(),read:false,wx,wz,text}; activeNotes.push(rec); floatingNotes.push(rec); if(floatingNotes.length>24){ const old=floatingNotes.shift(); scene.remove(old.mesh); activeNotes=activeNotes.filter(x=>x!==old); } }
+function spawnFloatingNote(wx,wz,text){ const nm=new THREE.Mesh(noteGeo,noteMat); nm.rotation.x=-Math.PI/2; nm.rotation.z=Math.random()*6.28; nm.position.set(wx,0.02,wz); scene.add(nm); const rec={mesh:nm,id:'f'+Math.random(),read:false,wx,wz,text}; activeNotes.push(rec); floatingNotes.push(rec); if(floatingNotes.length>24){ const old=floatingNotes.shift(); scene.remove(old.mesh); activeNotes=activeNotes.filter(x=>x!==old); } }
 async function watcherEvent(){ const o=randomOpenNear(player.x,player.z,4,11);
   if(Math.random()<0.35){ spawnFloatingNote(o.x,o.z,fillName(ensureMotif())); return; }   // recurring motif (Feature 9)
   const t=AI_KEY?await aiText('a short message left by something that has been watching the player move through the backrooms; reference being observed',cannedWatcher):cannedWatcher[(Math.random()*cannedWatcher.length)|0]; spawnFloatingNote(o.x,o.z,fillName(t)); }
