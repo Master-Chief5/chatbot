@@ -303,6 +303,8 @@ const GradeShader={ uniforms:{ tDiffuse:{value:null}, t:{value:0}, vig:{value:1.
       float n=fract(sin(dot(uv*(1.0+fract(t)), vec2(12.9898,78.233)))*43758.5453); col+=(n-0.5)*grain;
       col*=1.0-scan*(0.5+0.5*sin(uv.y*900.0));
       gl_FragColor=vec4(col,1.0); }` };
+let gradeSpike=0;                       // transient distortion kick (a glimpse / a phantom blinking out); decays each frame
+function kickGrade(a){ gradeSpike=Math.min(1.3,gradeSpike+a); }
 async function initPost(){
   try{
     const [{EffectComposer},{RenderPass},{ShaderPass},{UnrealBloomPass},{OutputPass}]=await Promise.all([
@@ -476,6 +478,9 @@ function setHowl(on){ ensureHowl(); if(howlGain) howlGain.gain.setTargetAtTime(o
 function screech(){ if(!actx) return; const t=actx.currentTime; // the moment it sees you
   [180,190,360,540,720].forEach(f=>{ const o=actx.createOscillator(); o.type='sawtooth'; o.frequency.setValueAtTime(f*0.6,t); o.frequency.exponentialRampToValueAtTime(f*1.5,t+0.5); const g=actx.createGain(); g.gain.setValueAtTime(0.0,t); g.gain.linearRampToValueAtTime(0.16,t+0.03); g.gain.exponentialRampToValueAtTime(0.001,t+0.7); o.connect(g); g.connect(master); o.start(t); o.stop(t+0.75); });
   const src=actx.createBufferSource(); src.buffer=noiseBuf(0.7); const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=1200; bp.Q.value=1.2; const ng=actx.createGain(); ng.gain.setValueAtTime(0.4,t); ng.gain.exponentialRampToValueAtTime(0.001,t+0.7); src.connect(bp); bp.connect(ng); ng.connect(master); src.start(t); }
+
+function glimpseSfx(){ if(!actx) return; const t=actx.currentTime; thump(0.18);   // a low flinch + a brief high shimmer the instant you catch its eyes
+  const s=actx.createBufferSource(); s.buffer=noiseBuf(0.5); const bp=actx.createBiquadFilter(); bp.type='highpass'; bp.frequency.value=2600; const g=actx.createGain(); g.gain.setValueAtTime(0.05,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.45); s.connect(bp); bp.connect(g); g.connect(master); s.start(t); }
 
 // ===================== AI (OpenAI or Google Gemini) =====================
 // Gemini exposes an OpenAI-compatible endpoint, so we keep one request shape and
@@ -651,6 +656,31 @@ function ensureShadow(){ if(shadow) return; shadow=new THREE.Mesh(new THREE.Caps
 function spawnShadow(){ ensureShadow(); for(let t=0;t<16;t++){ const a=Math.random()*6.28,r=15+Math.random()*9,o={x:player.x+Math.cos(a)*r,z:player.z+Math.sin(a)*r}; if(!blocked(o.x,o.z,0.4)){ shadow.position.set(o.x,1.3,o.z); shadow.visible=true; shadow.userData.life=9; break; } } }
 function updateShadow(dt){ if(!shadow||!shadow.visible) return; shadow.userData.life-=dt; const d=Math.hypot(shadow.position.x-player.x,shadow.position.z-player.z); const seen=lookingAt(shadow.position.x,shadow.position.z,0.55)&&los(shadow.position.x,shadow.position.z,player.x,player.z); if(shadow.userData.life<=0||d<8||(seen&&Math.random()<0.05)){ shadow.visible=false; } }
 
+// --- THE DOUBT ENGINE — fleeting FALSE sightings of the Bacteria. A pooled
+// silhouette appears at the edge of vision and is gone the instant you look
+// straight at it (or close in). It never hurts you; its only job is to make
+// you doubt every glimpse, so the REAL one — which freezes when stared at —
+// becomes unbearable. Director-paced, quiet, rare, never during a hunt. ---
+let phantom=null, phantomLife=0, phantomFade=0, phantomSway=0;
+function ensurePhantom(){ if(phantom) return; const g=new THREE.Group(), m=new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.92,fog:true});
+  const torso=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.05,2.0,5),m); torso.position.y=1.7; g.add(torso);
+  const head=new THREE.Mesh(new THREE.IcosahedronGeometry(0.22,0),m); head.position.y=2.84; head.scale.set(1,1.3,1); g.add(head);
+  for(const sx of [-1,1]){ const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.03,2.4,5),m); arm.position.set(sx*0.18,1.7,0); arm.rotation.z=sx*0.18; g.add(arm); }
+  g.visible=false; g.traverse(o=>{ o.frustumCulled=false; }); phantom=g; scene.add(g); }
+function spawnPhantom(){ ensurePhantom();
+  for(let t=0;t<18;t++){ const off=(Math.random()<0.5?1:-1)*(0.5+Math.random()*0.9), a=player.yaw+Math.PI+off, r=9+Math.random()*9, x=player.x+Math.cos(a)*r, z=player.z+Math.sin(a)*r;
+    if(blocked(x,z,0.4)||!los(x,z,player.x,player.z)||lookingAt(x,z,0.8)) continue;     // clear sightline, but NOT already dead-centre
+    phantom.position.set(x,0,z); phantom.lookAt(player.x,1.6,player.z); phantom.visible=true; phantomLife=2.2+Math.random()*3.4; phantomFade=0; phantomSway=Math.random()*6.28;
+    if(actx&&Math.random()<0.45) sBreath(a); return; } }
+function vanishPhantom(doubt){ if(!phantom||!phantom.visible) return; phantom.visible=false; phantomLife=0;
+  if(doubt){ if(Math.random()<0.4) subliminal(); whisperSfx(); if(Math.random()<0.3) showWhisper(fillName(Math.random()<0.5?'did you see that':'[n]?')); } }
+function updatePhantom(dt){ if(!phantom||!phantom.visible) return; phantomLife-=dt; phantomSway+=dt;
+  phantom.position.y=Math.sin(phantomSway*0.8)*0.02;                                    // a near-imperceptible sway, so it isn't quite a prop
+  const d=Math.hypot(phantom.position.x-player.x,phantom.position.z-player.z);
+  if(lookingAt(phantom.position.x,phantom.position.z,0.92)){ phantomFade+=dt; if(phantomFade>0.16) return vanishPhantom(true); } else phantomFade=0;   // look right at it → never there
+  if(d<6) return vanishPhantom(true);                                                   // approach it → gone
+  if(phantomLife<=0) vanishPhantom(false); }
+
 // --- Feature 5: THE WATCHER — leaves messages that reference you. ---
 const cannedWatcher=['still here?','you missed something','i watched you run','that wasn\'t the way','keep going [n]','i see you','you came back','why do you stop'];
 function spawnFloatingNote(wx,wz,text){ const nm=new THREE.Mesh(noteGeo,noteMat); nm.rotation.x=-Math.PI/2; nm.rotation.z=Math.random()*6.28; nm.position.set(wx,0.02,wz); scene.add(nm); const rec={mesh:nm,id:'f'+Math.random(),read:false,wx,wz,text}; activeNotes.push(rec); floatingNotes.push(rec); if(floatingNotes.length>24){ const old=floatingNotes.shift(); scene.remove(old.mesh); activeNotes=activeNotes.filter(x=>x!==old); } }
@@ -667,7 +697,7 @@ async function spawnMemoryRoom(){ showLevelBanner('— ?? —','the room remembe
 
 // --- Feature 10: TENSION CURVE DIRECTOR — paces everything. Long calms make
 // the rare scares hit harder. It also owns when the entity is told to hunt. ---
-let tension='calm',tensionT=45,paranoiaT=20,shadowT=35,watcherT=80;
+let tension='calm',tensionT=45,paranoiaT=20,shadowT=35,watcherT=80,phantomT=30;
 function setTension(s,d){ tension=s; tensionT=d; }
 function tensionUpdate(dt){
   const e=entities[0];
@@ -685,7 +715,8 @@ function tensionUpdate(dt){
   paranoiaT-=dt; if(paranoiaT<=0){ paranoiaT=(tension==='calm'?40:16)+Math.random()*24; if(Math.random()<lvl) paranoiaSound(); }
   shadowT-=dt; if(shadowT<=0){ shadowT=40+Math.random()*60; if((tension==='calm'||tension==='suspicion'||tension==='unease')&&Math.random()<0.6) spawnShadow(); }
   watcherT-=dt; if(watcherT<=0){ watcherT=110+Math.random()*160; if(tension!=='hunt') watcherEvent(); }
-  updateShadow(dt);
+  phantomT-=dt; if(phantomT<=0){ phantomT=20+Math.random()*28; if((tension==='suspicion'||tension==='unease'||tension==='escalation')&&!(phantom&&phantom.visible)&&Math.random()<0.6) spawnPhantom(); }
+  updateShadow(dt); updatePhantom(dt);
 }
 
 // --- Feature 9: ENVIRONMENTAL STORY — a motif (phrase) that recurs across
@@ -717,7 +748,7 @@ function psychUpdate(dt,moving,run){ trackTick(dt,moving,run); envIntel(dt); ten
   memoryT-=dt; if(memoryT<=0){ memoryT=900+Math.random()*900; spawnMemoryRoom(); } }
 function psychReset(){ track=newTrack(); for(const r of floatingNotes) scene.remove(r.mesh); floatingNotes=[]; addPillars.clear(); delPillars.clear();
   tension='calm'; tensionT=45; paranoiaT=22; shadowT=35; watcherT=80; eiT=30; memoryT=240; if(shadow) shadow.visible=false;
-  exitActive=false; if(exitGroup) exitGroup.visible=false; ensureMotif(); }
+  exitActive=false; if(exitGroup) exitGroup.visible=false; if(phantom) phantom.visible=false; phantomT=24; gradeSpike=0; ensureMotif(); }
 
 // ===================== PLAYER + LOOP =====================
 let player,stamina,running,dead=false,paused=false,playing=false,st=stats(),yawVel=0,pitchVel=0,wardCharges=0,prevYaw=0;
@@ -762,7 +793,7 @@ if(isTouch){ document.getElementById('touch').classList.add('on');
   document.getElementById('btnMenu').addEventListener('touchstart',e=>{togglePause();e.preventDefault();},{passive:false}); }
 function toggleTorch(){ if(st.torch>0) torchOn=!torchOn; }
 
-const clock=new THREE.Clock(); let flickT=0,hbT=0;
+const clock=new THREE.Clock(); let flickT=0,hbT=0,breathBehindT=0;
 function loop(){ requestAnimationFrame(loop); const dt=Math.min(0.05,clock.getDelta()); if(playing&&!paused&&!dead) update(dt); renderFrame(); }
 
 function update(dt){
@@ -821,6 +852,14 @@ function update(dt){
   const dread=Math.max(0,Math.min(1,1-(nearest-1)/14));
   vignette.style.boxShadow=`inset 0 0 ${120+dread*200}px ${20+dread*120}px rgba(0,0,0,${0.25+dread*0.6})`;
   redPulse.style.opacity=(dread*0.6*(0.6+0.4*Math.sin(performance.now()*0.008))).toFixed(3);
+  // perception frays as it nears: drive the cinematic grade (chromatic split, grain, tunnel vignette) by proximity, plus a decaying spike on glimpses
+  gradeSpike=Math.max(0,gradeSpike-dt*0.9);
+  if(gradePass){ const u=gradePass.uniforms, k=Math.min(1,dt*6);
+    u.ca.value   +=((0.0016+dread*0.0045+gradeSpike*0.006)-u.ca.value)*k;
+    u.grain.value+=((0.06  +dread*0.06  +gradeSpike*0.08 )-u.grain.value)*k;
+    u.vig.value  +=((1.15  +dread*0.30  +gradeSpike*0.22 )-u.vig.value)*k; }
+  // when it is right behind you and unseen — slow breathing that isn't yours
+  breathBehindT-=dt; if(nearest<4.6 && nearestUnseen && breathBehindT<=0){ breathBehindT=2.2+Math.random()*2.2; sBreath(player.yaw+Math.PI+(Math.random()-0.5)*0.7); }
   // directional cue when it's behind you and close (Sixth Sense upgrade)
   if(st.radar>0 && nearestUnseen && nearest<13){ const side=nearestSide; dreadEdge.style.background=`linear-gradient(${side>0?'270deg':'90deg'}, rgba(120,0,0,${0.04+st.radar*0.04}), rgba(120,0,0,0) 22%)`; dreadEdge.style.opacity=1; } else dreadEdge.style.opacity=0;
   hbT-=dt; if(nearest<15){ if(hbT<=0){ const v=0.25+dread*0.7; thump(v); setTimeout(()=>thump(v*0.7),140); hbT=0.5+(1-dread)*1.1; } }
@@ -847,6 +886,11 @@ function updateEntities(dt){
   const canSeePlayer=sight&&d<26;                          // it can see you
   const hears=d<playerNoise;                               // it hears your noise
   const dark=(!torchOn||blackoutT>0)?1.5:1;
+
+  // caught watching it: a flinch the instant your eyes first land on it (it freezes and stares back)
+  e.glimpseCd=(e.glimpseCd||0)-dt;
+  if(seenByPlayer && !e.wasSeen && e.mode!=='hunt' && d>2.6 && d<24 && e.glimpseCd<=0){ glimpseSfx(); kickGrade(0.7); e.glimpseCd=2.6; if(Math.random()<0.18) showWhisper(fillName(Math.random()<0.5?'it was watching':'[n]')); }
+  e.wasSeen=seenByPlayer;
 
   // twitching lurch + wiry limb sway (limbs flail while hunting)
   e.phase+=dt*(e.mode==='hunt'?13:4);
