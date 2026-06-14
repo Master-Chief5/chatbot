@@ -569,13 +569,14 @@ async function runDirector(){
   const e=entities[0]; let nearest=999,unseen=true,hunting=false;
   if(e){ nearest=Math.hypot(e.g.position.x-player.x,e.g.position.z-player.z); unseen=!(lookingAt(e.g.position.x,e.g.position.z)&&los(e.g.position.x,e.g.position.z,player.x,player.z)); hunting=e.mode==='hunt'; }
   const summary=`distance ${Math.round(nearest)}m, ${unseen?'it is NOT in your view':'you have eyes on it'}, it is currently ${hunting?'HUNTING you':'stalking'}; player is ${behave.run>behave.still?'running (loud)':'moving carefully'}${behave.dark>3?', and in the dark':''}`;
-  const fb=()=>{ const r=Math.random(); return {mood: r<0.78?'':(r<0.9?'hunt':'calm'), event: r<0.2?'blackout':(r<0.4?'drop':'none'), whisper:null}; };   // rarely hunts
-  const o=await aiJSON('You are the unseen DIRECTOR of a SLOW psychological Backrooms horror game. You puppet one entity (the "Bacteria", a tall wire-thin figure) but you favour DREAD over attacks: it should mostly WATCH, lurk, and appear/vanish — actual hunts are rare and earned. Respond ONLY as JSON: mood ("" = let it stalk/watch normally (default, use most of the time), "hunt" = rarely, only when the player is careless or too comfortable, make it charge, "calm" = make it back off), event ("none"|"blackout"|"drop"), whisper (a short line that reacts to the player, or null). Prefer "" and unsettling whispers over hunts.',
+  const fb=()=>{ const r=Math.random(); return {mood: r<0.78?'':(r<0.9?'hunt':'calm'), event: r<0.16?'phantom':(r<0.24?'mimic':(r<0.4?'blackout':(r<0.55?'drop':'none'))), whisper:null}; };   // rarely hunts; favours false sightings
+  const o=await aiJSON('You are the unseen DIRECTOR of a SLOW psychological Backrooms horror game. You puppet one entity (the "Bacteria", a tall wire-thin figure) but you favour DREAD over attacks: it should mostly WATCH, lurk, and appear/vanish — actual hunts are rare and earned. Respond ONLY as JSON: mood ("" = let it stalk/watch normally (default, use most of the time), "hunt" = rarely, only when the player is careless or too comfortable, make it charge, "calm" = make it back off), event ("none"|"blackout" = kill the lights briefly|"drop" = leave a bottle|"phantom" = a FLEETING false sighting of the entity at the edge of vision that vanishes when looked at|"mimic" = a distant human-shaped silhouette shaped like the player, just watching), whisper (a short line that reacts to the player, or null). Favour "phantom"/"mimic" false-sightings and unsettling whispers over hunts, so the player can never trust what they see.',
     `Player "${playerName}". ${summary}. Level ${level?level.name:'Level 0'} danger ${level?level.danger:1}. Choose the scariest fair move.`, fb);
   if(o.mood==='hunt' && tension!=='calm' && tension!=='recovery'){ calmT=0; if(e) startHunt(e); }   // tension curve still paces it
   else if(o.mood==='calm'){ calmT=Math.max(calmT,7); if(e){ e.mode='stalk'; e.path=null; } setHowl(false); }
   if(o.whisper){ showWhisper(fillName(o.whisper)); whisperSfx(); }
-  switch(o.event){ case 'blackout': blackoutT=6; if(!o.whisper) showWhisper('the lights'); break; case 'drop': dropAlmond(); break; }
+  switch(o.event){ case 'blackout': blackoutT=6; if(!o.whisper) showWhisper('the lights'); break; case 'drop': dropAlmond(); break;
+    case 'phantom': if(!(phantom&&phantom.visible)) spawnPhantom('bacteria'); break; case 'mimic': if(!(phantom&&phantom.visible)) spawnPhantom('mimic'); break; }
 }
 function dropAlmond(){ const t=randomOpenNear(player.x,player.z,4,9); const mesh=new THREE.Mesh(almondGeo,almondMat.clone()); mesh.position.set(t.x,0.45,t.z); scene.add(mesh); activePickups.push({mesh,id:'drop'+Math.random(),wx:t.x,wz:t.z}); showToast('a bottle appears'); }
 
@@ -661,19 +662,29 @@ function updateShadow(dt){ if(!shadow||!shadow.visible) return; shadow.userData.
 // straight at it (or close in). It never hurts you; its only job is to make
 // you doubt every glimpse, so the REAL one — which freezes when stared at —
 // becomes unbearable. Director-paced, quiet, rare, never during a hunt. ---
-let phantom=null, phantomLife=0, phantomFade=0, phantomSway=0;
+let phantom=null, phantomLife=0, phantomFade=0, phantomSway=0, phantomKind='bacteria';
 function ensurePhantom(){ if(phantom) return; const g=new THREE.Group(), m=new THREE.MeshBasicMaterial({color:0x000000,transparent:true,opacity:0.92,fog:true});
-  const torso=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.05,2.0,5),m); torso.position.y=1.7; g.add(torso);
-  const head=new THREE.Mesh(new THREE.IcosahedronGeometry(0.22,0),m); head.position.y=2.84; head.scale.set(1,1.3,1); g.add(head);
-  for(const sx of [-1,1]){ const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.03,2.4,5),m); arm.position.set(sx*0.18,1.7,0); arm.rotation.z=sx*0.18; g.add(arm); }
+  // kind A — the Bacteria silhouette (tall, wire-thin, arms to the floor)
+  const bac=new THREE.Group();
+  const torso=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.05,2.0,5),m); torso.position.y=1.7; bac.add(torso);
+  const head=new THREE.Mesh(new THREE.IcosahedronGeometry(0.22,0),m); head.position.y=2.84; head.scale.set(1,1.3,1); bac.add(head);
+  for(const sx of [-1,1]){ const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.03,2.4,5),m); arm.position.set(sx*0.18,1.7,0); arm.rotation.z=sx*0.18; bac.add(arm); }
+  // kind B — a MIMIC: an ordinary human silhouette your own height, just standing, watching (the entity wearing your shape)
+  const mim=new THREE.Group();
+  const mt=new THREE.Mesh(new THREE.CylinderGeometry(0.16,0.13,0.92,7),m); mt.position.y=1.02; mim.add(mt);
+  const mh=new THREE.Mesh(new THREE.SphereGeometry(0.16,8,6),m); mh.position.y=1.62; mim.add(mh);
+  for(const sx of [-1,1]){ const arm=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.04,0.72,6),m); arm.position.set(sx*0.21,1.05,0); mim.add(arm);
+    const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.05,0.96,6),m); leg.position.set(sx*0.09,0.48,0); mim.add(leg); }
+  g.add(bac); g.add(mim); g._bac=bac; g._mim=mim;
   g.visible=false; g.traverse(o=>{ o.frustumCulled=false; }); phantom=g; scene.add(g); }
-function spawnPhantom(){ ensurePhantom();
+function spawnPhantom(kind){ ensurePhantom(); kind=(kind==='mimic')?'mimic':'bacteria';
   for(let t=0;t<18;t++){ const off=(Math.random()<0.5?1:-1)*(0.5+Math.random()*0.9), a=player.yaw+Math.PI+off, r=9+Math.random()*9, x=player.x+Math.cos(a)*r, z=player.z+Math.sin(a)*r;
     if(blocked(x,z,0.4)||!los(x,z,player.x,player.z)||lookingAt(x,z,0.8)) continue;     // clear sightline, but NOT already dead-centre
+    phantomKind=kind; phantom._bac.visible=(kind!=='mimic'); phantom._mim.visible=(kind==='mimic');
     phantom.position.set(x,0,z); phantom.lookAt(player.x,1.6,player.z); phantom.visible=true; phantomLife=2.2+Math.random()*3.4; phantomFade=0; phantomSway=Math.random()*6.28;
     if(actx&&Math.random()<0.45) sBreath(a); return; } }
 function vanishPhantom(doubt){ if(!phantom||!phantom.visible) return; phantom.visible=false; phantomLife=0;
-  if(doubt){ if(Math.random()<0.4) subliminal(); whisperSfx(); if(Math.random()<0.3) showWhisper(fillName(Math.random()<0.5?'did you see that':'[n]?')); } }
+  if(doubt){ if(Math.random()<0.4) subliminal(); whisperSfx(); if(Math.random()<0.3) showWhisper(fillName(phantomKind==='mimic'?(Math.random()<0.5?'that was you':'who is that, [n]'):(Math.random()<0.5?'did you see that':'[n]?'))); } }
 function updatePhantom(dt){ if(!phantom||!phantom.visible) return; phantomLife-=dt; phantomSway+=dt;
   phantom.position.y=Math.sin(phantomSway*0.8)*0.02;                                    // a near-imperceptible sway, so it isn't quite a prop
   const d=Math.hypot(phantom.position.x-player.x,phantom.position.z-player.z);
@@ -715,7 +726,7 @@ function tensionUpdate(dt){
   paranoiaT-=dt; if(paranoiaT<=0){ paranoiaT=(tension==='calm'?40:16)+Math.random()*24; if(Math.random()<lvl) paranoiaSound(); }
   shadowT-=dt; if(shadowT<=0){ shadowT=40+Math.random()*60; if((tension==='calm'||tension==='suspicion'||tension==='unease')&&Math.random()<0.6) spawnShadow(); }
   watcherT-=dt; if(watcherT<=0){ watcherT=110+Math.random()*160; if(tension!=='hunt') watcherEvent(); }
-  phantomT-=dt; if(phantomT<=0){ phantomT=20+Math.random()*28; if((tension==='suspicion'||tension==='unease'||tension==='escalation')&&!(phantom&&phantom.visible)&&Math.random()<0.6) spawnPhantom(); }
+  phantomT-=dt; if(phantomT<=0){ phantomT=20+Math.random()*28; if((tension==='suspicion'||tension==='unease'||tension==='escalation')&&!(phantom&&phantom.visible)&&Math.random()<0.6) spawnPhantom(Math.random()<0.28?'mimic':'bacteria'); }
   updateShadow(dt); updatePhantom(dt);
 }
 
