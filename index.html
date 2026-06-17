@@ -140,6 +140,10 @@
 <script type="module">
 import * as THREE from 'three';
 const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+// make hidden failures visible: log everything, and surface the FIRST real error to the corner tag (mirrors aiSelfTest)
+function flagError(where,e){ try{ console.error('['+where+']', e); const t=document.getElementById('aiTag'); if(t&&!flagError._shown){ flagError._shown=1; t.textContent='⚠ '+where+': '+((e&&e.message)||e); } }catch(_){} }
+addEventListener('error', e=>flagError('runtime', e.error||e.message));
+addEventListener('unhandledrejection', e=>flagError('promise', e.reason));
 
 // ===================== SAVE / PROGRESSION =====================
 const SAVE_KEY='backrooms_save_v3';
@@ -155,8 +159,8 @@ const UPGRADES={
 function defaultSave(){ const u={}; for(const k in UPGRADES) u[k]=0; return {bank:0,totalCollected:0,upgrades:u,sens:1.0,
   vol:0.9, quality:(('ontouchstart' in window)?'medium':'high'), fov:76,
   psych:{runs:0,sprint:0,fled:0,lookback:0,favTurn:'left'}, story:{phase:1,objectivesDone:0,won:false}}; }
-function loadSave(){ try{ const s=JSON.parse(localStorage.getItem(SAVE_KEY)); if(s&&s.upgrades){ const d=defaultSave(); return {...d,...s,upgrades:{...d.upgrades,...s.upgrades},psych:{...d.psych,...s.psych},story:{...d.story,...s.story}}; } }catch(e){} return defaultSave(); }
-function persist(){ try{ localStorage.setItem(SAVE_KEY,JSON.stringify(save)); }catch(e){} }
+function loadSave(){ try{ const s=JSON.parse(localStorage.getItem(SAVE_KEY)); if(s&&s.upgrades){ const d=defaultSave(); return {...d,...s,upgrades:{...d.upgrades,...s.upgrades},psych:{...d.psych,...s.psych},story:{...d.story,...s.story}}; } }catch(e){ console.warn('save load failed — resetting',e); } return defaultSave(); }
+function persist(){ try{ localStorage.setItem(SAVE_KEY,JSON.stringify(save)); }catch(e){ if(!persist._warned){ persist._warned=1; console.warn('save failed',e); } } }
 const save=loadSave();
 function upgCost(k){ return Math.round(UPGRADES[k].base*Math.pow(UPGRADES[k].mult,save.upgrades[k])); }
 function stats(){ const u=save.upgrades; return { walkSpeed:3.7+u.speed*0.8, sprintMul:1.95, maxStamina:100+u.stamina*45,
@@ -318,7 +322,7 @@ async function initPost(){
     gradePass=new ShaderPass(GradeShader); composer.addPass(gradePass);
     composer.addPass(new OutputPass());
     composer.setSize(innerWidth,innerHeight); postReady=true; applyQuality();
-  }catch(e){ postReady=false; /* graceful fallback to direct render */ }
+  }catch(e){ postReady=false; console.warn('postprocessing unavailable — direct render',e); /* graceful fallback */ }
 }
 function applyQuality(){
   const q=save.quality;
@@ -461,7 +465,7 @@ function startAudio(){ if(started) return; started=true; try{
   [42,43.7,63].forEach(f=>{ const o=actx.createOscillator(); o.type='sine'; o.frequency.value=f; const g=actx.createGain(); g.gain.value=0.5; o.connect(g); g.connect(droneG); o.start(); });
   // fluorescent hum
   const humG=actx.createGain(); humG.gain.value=0.03; humG.connect(master); [60,120].forEach((f,i)=>{ const o=actx.createOscillator(); o.type=i?'sine':'sawtooth'; o.frequency.value=f; const g=actx.createGain(); g.gain.value=i?0.4:0.3; o.connect(g); g.connect(humG); o.start(); });
-}catch(e){} }
+}catch(e){ console.warn('audio init failed',e); } }
 function noiseBuf(dur){ const n=actx.sampleRate*dur|0,b=actx.createBuffer(1,n,actx.sampleRate),d=b.getChannelData(0); for(let i=0;i<n;i++) d[i]=Math.random()*2-1; return b; }
 function thump(vol){ if(!actx) return; const t=actx.currentTime; const o=actx.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(70,t); o.frequency.exponentialRampToValueAtTime(38,t+0.18); const g=actx.createGain(); g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(vol,t+0.02); g.gain.exponentialRampToValueAtTime(0.001,t+0.3); o.connect(g); g.connect(master); o.start(t); o.stop(t+0.32); }
 function whisperSfx(){ if(!actx) return; const t=actx.currentTime; const src=actx.createBufferSource(); src.buffer=noiseBuf(1.2); const bp=actx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=1400; bp.Q.value=6; const g=actx.createGain(); g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.06,t+0.2); g.gain.linearRampToValueAtTime(0,t+1.1); src.connect(bp); bp.connect(g); g.connect(master); src.start(t); }
@@ -531,10 +535,10 @@ async function aiSelfTest(){ const tag=document.getElementById('aiTag');
 async function aiJSON(sys,user,fb){ if(!AI_KEY) return fb();
   try{ const body={temperature:1,max_tokens:240,messages:[{role:'system',content:sys},{role:'user',content:user}]};
     if(AI_PROVIDER==='openai') body.response_format={type:'json_object'};      // Gemini compat: ask via prompt + parse loosely
-    const r=await aiCall(body); const j=await r.json(); return parseJSONLoose(aiExtract(j))||fb(); }catch(e){ return fb(); } }
+    const r=await aiCall(body); const j=await r.json(); return parseJSONLoose(aiExtract(j))||fb(); }catch(e){ console.warn('aiJSON',e); return fb(); } }
 async function aiText(context,fb){ if(!AI_KEY) return fillName(fb[(Math.random()*fb.length)|0]);
   try{ const r=await aiCall({temperature:1.2,max_tokens:30,messages:[{role:'system',content:`You write SHORT, deeply unsettling Backrooms horror fragments meant to frighten an adult: 3-13 words, lowercase, no quotes. The player's name is "${playerName}"; use it sometimes for dread. Output only the fragment.`},{role:'user',content:context}]});
-    const j=await r.json(); const t=aiExtract(j)?.trim(); return t?t.replace(/^["']|["']$/g,''):fillName(fb[(Math.random()*fb.length)|0]); }catch(e){ return fillName(fb[(Math.random()*fb.length)|0]); } }
+    const j=await r.json(); const t=aiExtract(j)?.trim(); return t?t.replace(/^["']|["']$/g,''):fillName(fb[(Math.random()*fb.length)|0]); }catch(e){ console.warn('aiText',e); return fillName(fb[(Math.random()*fb.length)|0]); } }
 function safeColor(hex,fb){ try{ return new THREE.Color(hex); }catch(e){ return new THREE.Color(fb); } }
 
 // levels
@@ -796,7 +800,8 @@ const keys={};
 addEventListener('keydown',e=>{ keys[e.code]=true; if(e.code==='KeyF') toggleTorch(); if(e.code==='KeyC'||e.code==='ControlLeft') crouching=!crouching; if(e.code==='KeyB'||e.code==='Space'){ holdingBreath=breath>5; e.preventDefault?.(); } if(e.code==='Escape'&&playing&&!dead) togglePause(); });
 addEventListener('keyup',e=>{ keys[e.code]=false; if(e.code==='KeyB'||e.code==='Space') holdingBreath=false; });
 const canvas=renderer.domElement;
-canvas.addEventListener('click',()=>{ if(playing&&!paused&&!dead&&!isTouch) canvas.requestPointerLock(); });
+function lockPointer(){ if(isTouch||!canvas.requestPointerLock) return; try{ const p=canvas.requestPointerLock(); if(p&&p.catch) p.catch(()=>{}); }catch(_){} }   // pointer lock rejects benignly without a fresh gesture / in headless — swallow at source
+canvas.addEventListener('click',()=>{ if(playing&&!paused&&!dead) lockPointer(); });
 addEventListener('mousemove',e=>{ if(document.pointerLockElement===canvas){ const s=0.0022*save.sens; player.yaw-=e.movementX*s; player.pitch=Math.max(-1.45,Math.min(1.45,player.pitch-e.movementY*s)); } });
 
 let stickVec={x:0,y:0},stickId=null,lookId=null,lastLook={x:0,y:0};
@@ -818,7 +823,7 @@ if(isTouch){ document.getElementById('touch').classList.add('on');
 function toggleTorch(){ if(st.torch>0) torchOn=!torchOn; }
 
 const clock=new THREE.Clock(); let flickT=0,hbT=0,breathBehindT=0;
-function loop(){ requestAnimationFrame(loop); const dt=Math.min(0.05,clock.getDelta()); if(playing&&!paused&&!dead) update(dt); renderFrame(); }
+function loop(){ requestAnimationFrame(loop); const dt=Math.min(0.05,clock.getDelta()); try{ if(playing&&!paused&&!dead) update(dt); renderFrame(); }catch(e){ flagError('loop',e); } }  // rAF stays OUTSIDE the try, so one throw can't silently freeze the game
 
 function update(dt){
   let fwd=0,str=0;
@@ -850,7 +855,7 @@ function update(dt){
   let near=null,best=1.7;
   for(const p of activePickups){ p.mesh.rotation.y+=dt*1.6; p.mesh.position.y=0.45+Math.sin(performance.now()*0.003+p.wx)*0.06; p.mesh.material.emissiveIntensity=0.55+0.3*Math.sin(performance.now()*0.005)+st.radar*0.3; const d=Math.hypot(p.wx-player.x,p.wz-player.z); if(d<best){best=d;near=p;} }
   if(near){ near.mesh.parent.remove(near.mesh); collected.add(near.id); activePickups=activePickups.filter(x=>x!==near); save.bank++; save.totalCollected++; persist(); }
-  for(const n of activeNotes){ const d=Math.hypot(n.wx-player.x,n.wz-player.z); if(d<1.7&&!n.read){ n.read=true; if(n.text){ readNotes.set(n.id,n.text); showNote(n.text); } else (async()=>{ const t=await aiText('a scrawled note left on a wall deep in the backrooms',cannedNotes); readNotes.set(n.id,t); showNote(t); })(); } }
+  for(const n of activeNotes){ const d=Math.hypot(n.wx-player.x,n.wz-player.z); if(d<1.7&&!n.read){ n.read=true; if(n.text){ readNotes.set(n.id,n.text); showNote(n.text); } else (async()=>{ const t=await aiText('a scrawled note left on a wall deep in the backrooms',cannedNotes); readNotes.set(n.id,t); showNote(t); })().catch(e=>flagError('note',e)); } }
 
   // noise drives the entity's hearing: sprinting is loud, crouching is quiet, holding your breath is near-silent
   playerNoise = run ? 16 : (moving ? (crouching?3:7) : (crouching?1:2));
@@ -996,14 +1001,14 @@ volRange.value=save.vol; volVal.textContent=Math.round(save.vol*100); fovRange.v
 volRange.addEventListener('input',()=>{ save.vol=+volRange.value; volVal.textContent=Math.round(save.vol*100); if(master) master.gain.value=save.vol; persist(); });
 fovRange.addEventListener('input',()=>{ save.fov=+fovRange.value; fovVal.textContent=save.fov; camera.fov=save.fov; camera.updateProjectionMatrix(); persist(); });
 qualSel.addEventListener('change',()=>{ save.quality=qualSel.value; applyQuality(); persist(); });
-document.getElementById('playBtn').onclick=()=>{ const nm=document.getElementById('playerName').value.trim(); playerName=nm||'you'; const k=document.getElementById('aiKey').value.trim(); configureAI(k); hide(startScreen); startAudio(); applySettings(); startRun(); aiSelfTest(); updateHUD(); if(!isTouch) canvas.requestPointerLock(); };
+document.getElementById('playBtn').onclick=()=>{ const nm=document.getElementById('playerName').value.trim(); playerName=nm||'you'; const k=document.getElementById('aiKey').value.trim(); configureAI(k); hide(startScreen); startAudio(); applySettings(); startRun(); aiSelfTest(); updateHUD(); lockPointer(); };
 function renderObjLog(){ const el=document.getElementById('objLog'); const ph=save.story.phase, done=save.story.objectivesDone||0;
   const phases=['','survive & explore','strange signals','locate the anomalies','the escape protocol','the way out'];
   el.innerHTML=`◈ PHASE ${ph}/5 — ${phases[ph]||''}<br>signals recovered: ${done}${save.story.won?'  ·  you escaped once':''}${save.psych&&save.psych.motif?'<br><span style="opacity:.6">recurring: "'+save.psych.motif+'"</span>':''}`; }
 function togglePause(){ paused=!paused; if(paused){ setHowl(false); renderUpgrades(); renderObjLog(); show(pauseScreen); if(document.pointerLockElement) document.exitPointerLock(); } else hide(pauseScreen); }
-document.getElementById('resumeBtn').onclick=()=>{ togglePause(); if(!isTouch) canvas.requestPointerLock(); };
-document.getElementById('restartBtn').onclick=()=>{ hide(pauseScreen); startRun(); updateHUD(); if(!isTouch) canvas.requestPointerLock(); };
-document.getElementById('reviveBtn').onclick=()=>{ hide(overScreen); startRun(); updateHUD(); if(!isTouch) canvas.requestPointerLock(); };
+document.getElementById('resumeBtn').onclick=()=>{ togglePause(); lockPointer(); };
+document.getElementById('restartBtn').onclick=()=>{ hide(pauseScreen); startRun(); updateHUD(); lockPointer(); };
+document.getElementById('reviveBtn').onclick=()=>{ hide(overScreen); startRun(); updateHUD(); lockPointer(); };
 document.getElementById('shopBtn').onclick=()=>{ hide(overScreen); paused=true; playing=false; renderUpgrades(); show(pauseScreen); };
 function renderUpgrades(){ document.getElementById('bankNum').textContent=save.bank; const wrap=document.getElementById('upg'); wrap.innerHTML='';
   for(const key in UPGRADES){ const u=UPGRADES[key],lvl=save.upgrades[key],cost=upgCost(key),maxed=lvl>=u.max;
