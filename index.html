@@ -96,9 +96,9 @@
   <p class="sub">You no-clipped out of reality. Something noticed. It is patient, and it does not like to be watched —
      which is the only reason you are still alive. Keep it in sight. Find the way down. Do not run out of places to look.</p>
   <div class="field"><label>YOUR NAME — it will learn it</label><input id="playerName" type="text" maxlength="20" placeholder="(optional)" autocomplete="off" /></div>
-  <div class="field"><label>🔑 OpenAI or Google Gemini API key — powers the live AI</label>
-    <input id="aiKey" type="password" placeholder="sk-... or AIza...  (optional — blank = offline AI)" autocomplete="off" />
-    <div class="tiny">Auto-detects the provider (Gemini keys start with <b>AIza</b>, OpenAI with <b>sk-</b>). The AI directs the entity,
+  <div class="field"><label>🔑 OpenAI · Gemini · Kimi API key — powers the live AI</label>
+    <input id="aiKey" type="password" placeholder="sk-…  ·  AIza…  ·  kimi:sk-…   (optional — blank = offline AI)" autocomplete="off" />
+    <div class="tiny">Auto-detects the provider (Gemini keys start with <b>AIza</b>, OpenAI with <b>sk-</b>). For <b>Moonshot / Kimi</b>, prefix your key with <b>kimi:</b> (e.g. <b>kimi:sk-…</b>) — it drives the game over Moonshot's Anthropic-compatible API. The AI directs the entity,
        writes whispers that react to how you play (and your name), names levels, sets objectives, and writes your death.
        Stays in your browser; sent only to your chosen provider. The corner tag confirms if it connected.</div>
   </div>
@@ -487,11 +487,16 @@ function glimpseSfx(){ if(!actx) return; const t=actx.currentTime; thump(0.18); 
 // just swap the base URL + model based on the key. Provider auto-detected:
 //   "AIza..."  -> Google Gemini      "sk-..." (or anything else) -> OpenAI
 let AI_KEY=null, AI_PROVIDER='none', AI_BASE='', AI_MODEL='', playerName='you';
-function configureAI(key){ AI_KEY=key||null;
+function configureAI(key){ key=(key||'').trim(); AI_KEY=key||null;
   if(!AI_KEY){ AI_PROVIDER='none'; return; }
-  if(/^AIza/.test(AI_KEY)){ AI_PROVIDER='gemini'; AI_BASE='https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'; AI_MODEL='gemini-2.0-flash'; }
-  else { AI_PROVIDER='openai'; AI_BASE='https://api.openai.com/v1/chat/completions'; AI_MODEL='gpt-4o-mini'; }
+  // Moonshot / Kimi (Anthropic-compatible Messages API). Kimi keys are "sk-" like OpenAI, so they can't be auto-detected — prefix with "kimi:" or "moonshot:".
+  if(/^(kimi|moonshot):/i.test(key)){ AI_PROVIDER='kimi'; AI_KEY=key.replace(/^(kimi|moonshot):/i,'').trim(); AI_BASE='https://api.moonshot.cn/anthropic/v1/messages'; AI_MODEL='kimi-k2-0711-preview'; return; }
+  if(/^AIza/.test(key)){ AI_PROVIDER='gemini'; AI_BASE='https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'; AI_MODEL='gemini-2.0-flash'; return; }
+  if(/^sk-ant-/.test(key)){ AI_PROVIDER='anthropic'; AI_BASE='https://api.anthropic.com/v1/messages'; AI_MODEL='claude-3-5-haiku-latest'; return; }   // a real Anthropic key works too
+  AI_PROVIDER='openai'; AI_BASE='https://api.openai.com/v1/chat/completions'; AI_MODEL='gpt-4o-mini';
 }
+const AI_ANTHROPIC=()=>AI_PROVIDER==='kimi'||AI_PROVIDER==='anthropic';     // these speak the Anthropic Messages API, not OpenAI chat-completions
+function aiExtract(j){ return AI_ANTHROPIC() ? j?.content?.[0]?.text : j?.choices?.[0]?.message?.content; }
 function parseJSONLoose(t){ if(!t) return null; try{ return JSON.parse(t); }catch(e){} const m=t.match(/\{[\s\S]*\}/); if(m){ try{ return JSON.parse(m[0]); }catch(e){} } return null; }
 const cannedWhispers=['it sees you now','do not turn around','you were never meant to leave','closer','your room is gone','it wears your footsteps','no exit, only deeper','we are glad you came','smile','keep looking, [n]','behind you, [n]','you blinked'];
 const cannedNotes=['IF YOU READ THIS RUN','day 47 the walls moved again','dont look away from it','dont trust the exits','i can hear it humming','there is no level 1','help me','it copies your face','i stopped counting doors'];
@@ -507,7 +512,15 @@ const offLevels=[
 function fillName(s){ return (s||'').replace(/\[n\]/gi,playerName); }
 // Verify the key actually works (failures otherwise fall back silently). Tells
 // you the truth in the corner tag, and disables a dead key so it stops retrying.
-async function aiCall(body){ return fetch(AI_BASE,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+AI_KEY},body:JSON.stringify({model:AI_MODEL,...body})}); }
+async function aiCall(body){
+  if(AI_ANTHROPIC()){   // Anthropic Messages API: system is a top-level field, headers differ, reply is content[].text
+    const msgs=body.messages||[], sys=msgs.filter(m=>m.role==='system').map(m=>m.content).join('\n\n'),
+      conv=msgs.filter(m=>m.role!=='system').map(m=>({role:m.role==='assistant'?'assistant':'user',content:String(m.content)}));
+    const payload={model:AI_MODEL,max_tokens:body.max_tokens||256,messages:conv.length?conv:[{role:'user',content:'ping'}]};
+    if(sys) payload.system=sys; if(typeof body.temperature==='number') payload.temperature=Math.max(0,Math.min(1,body.temperature));
+    return fetch(AI_BASE,{method:'POST',headers:{'content-type':'application/json','x-api-key':AI_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify(payload)});
+  }
+  return fetch(AI_BASE,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+AI_KEY},body:JSON.stringify({model:AI_MODEL,...body})}); }
 async function aiSelfTest(){ const tag=document.getElementById('aiTag');
   if(!AI_KEY){ tag.textContent='AI: OFFLINE (no key)'; return; }
   tag.textContent='AI: checking '+AI_PROVIDER+'…';
@@ -518,10 +531,10 @@ async function aiSelfTest(){ const tag=document.getElementById('aiTag');
 async function aiJSON(sys,user,fb){ if(!AI_KEY) return fb();
   try{ const body={temperature:1,max_tokens:240,messages:[{role:'system',content:sys},{role:'user',content:user}]};
     if(AI_PROVIDER==='openai') body.response_format={type:'json_object'};      // Gemini compat: ask via prompt + parse loosely
-    const r=await aiCall(body); const j=await r.json(); return parseJSONLoose(j.choices?.[0]?.message?.content)||fb(); }catch(e){ return fb(); } }
+    const r=await aiCall(body); const j=await r.json(); return parseJSONLoose(aiExtract(j))||fb(); }catch(e){ return fb(); } }
 async function aiText(context,fb){ if(!AI_KEY) return fillName(fb[(Math.random()*fb.length)|0]);
   try{ const r=await aiCall({temperature:1.2,max_tokens:30,messages:[{role:'system',content:`You write SHORT, deeply unsettling Backrooms horror fragments meant to frighten an adult: 3-13 words, lowercase, no quotes. The player's name is "${playerName}"; use it sometimes for dread. Output only the fragment.`},{role:'user',content:context}]});
-    const j=await r.json(); const t=j.choices?.[0]?.message?.content?.trim(); return t?t.replace(/^["']|["']$/g,''):fillName(fb[(Math.random()*fb.length)|0]); }catch(e){ return fillName(fb[(Math.random()*fb.length)|0]); } }
+    const j=await r.json(); const t=aiExtract(j)?.trim(); return t?t.replace(/^["']|["']$/g,''):fillName(fb[(Math.random()*fb.length)|0]); }catch(e){ return fillName(fb[(Math.random()*fb.length)|0]); } }
 function safeColor(hex,fb){ try{ return new THREE.Color(hex); }catch(e){ return new THREE.Color(fb); } }
 
 // levels
